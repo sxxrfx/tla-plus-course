@@ -1,0 +1,78 @@
+<h1>Replace a finite search with an explicit argument.</h1>
+<p class="lead">{{lesson:tools}} named TLAPS, the proof system, and {{lesson:invariants}} gave you the three obligations it needs. A finished TLC run covers the instances you gave it, and {{lesson:scaling}} showed how little that may be. A proof can cover every instance, provided its assumptions and steps are correct.</p>
+<!--fig:tree-->
+<p>The hard part is usually finding the invariant that carries the design argument, which you did with TLC in the previous lessons. What remains is the structure in the diagram: a claim, split into smaller claims, until each one is small enough to check on its own.</p>
+<h2>A worked proof</h2>
+<p>Return to <code>Inventory</code>. Let Inv combine <code>TypeOK</code> and <code>Conservation</code>. Initially <code>remaining = 1</code> and <code>booked</code> is empty. In <code>Reserve(b)</code>, the guard ensures b is not already in <code>booked</code>, so adding b raises its cardinality by exactly one. The action lowers <code>remaining</code> by one, preserving the sum, and its positive-stock guard preserves the lower bound. Stuttering preserves both. Inv implies <code>NoOverselling</code> because <code>remaining</code> is nonnegative.</p>
+<p>That is the informal outline. Written as a TLA+ <strong>hierarchical proof</strong>, the same argument has numbered steps. <code>&lt;1&gt;2</code> is a top-level step, and its <code>&lt;2&gt;</code> steps are the children that prove it:</p>
+<pre><code>---------------- MODULE InventoryProof ----------------
+EXTENDS Inventory, TLAPS
+Inv == /\ TypeOK
+       /\ IsFiniteSet(booked)
+       /\ Conservation
+LEMMA CardEmpty == IsFiniteSet({}) /\ Cardinality({}) = 0
+    PROOF OMITTED
+LEMMA CardNat == \A S : IsFiniteSet(S) =&gt; Cardinality(S) \in Nat
+    PROOF OMITTED
+LEMMA CardAdd == \A S, x : IsFiniteSet(S) /\ x \notin S =&gt;
+    /\ IsFiniteSet(S \cup {x})
+    /\ Cardinality(S \cup {x}) = Cardinality(S) + 1
+    PROOF OMITTED
+THEOREM Safety == Spec =&gt; []NoOverselling
+&lt;1&gt;1. Init =&gt; Inv
+    BY CardEmpty DEF Init, Inv, TypeOK, Conservation
+&lt;1&gt;2. Inv /\ [Next]_vars =&gt; Inv'
+    &lt;2&gt; SUFFICES ASSUME Inv, [Next]_vars PROVE Inv'
+        OBVIOUS
+    &lt;2&gt;1. ASSUME NEW b \in Buyers, Reserve(b) PROVE Inv'
+        BY &lt;2&gt;1, CardAdd, CardNat
+        DEF Reserve, Inv, TypeOK, Conservation
+    &lt;2&gt;2. CASE UNCHANGED vars
+        BY &lt;2&gt;2 DEF vars, Inv, TypeOK, Conservation
+    &lt;2&gt;3. QED
+        BY &lt;2&gt;1, &lt;2&gt;2 DEF Next
+&lt;1&gt;3. Inv =&gt; NoOverselling
+    BY CardNat DEF Inv, TypeOK, Conservation, NoOverselling
+&lt;1&gt;4. QED
+    BY &lt;1&gt;1, &lt;1&gt;2, &lt;1&gt;3, PTL DEF Spec
+=======================================================</code></pre>
+<div class="callout"><p>How far this was checked: the module parses under SANY with a stand-in for the <code>TLAPS</code> module, and TLC confirms Inv is inductive for <code>Buyers = {A, B}</code>, with 3 states and <code>NoOverselling</code> holding. It has <strong>not</strong> been run through TLAPS, so a prover may ask for more detail in some steps. Treat it as the shape of a proof. The three <code>OMITTED</code> lemmas are facts about finite sets that a complete proof must import or prove.</p></div>
+<p><code>BY</code> lists the facts a step may use and <code>DEF</code> lists the definitions it may expand. Nothing else is visible, which is the point: every use of an assumption is on the page. <code>PTL</code> names propositional temporal logic, the reasoning that gets from “preserved by every step” to <code>[]</code>.</p>
+<details class="answer"><summary>Exercise: remove <code>b \notin booked</code> from Reserve. Is the one-ticket model enough to expose a bug?</summary><p>Not in this one-ticket model. TLC still finds 3 states and no error. Inv plus <code>remaining &gt; 0</code> implies <code>booked</code> is empty, so the membership guard is redundant here and the proof can recover that fact. With more tickets, the same buyer could reserve twice: adding that buyer again does not increase the cardinality while <code>remaining</code> decreases. The broader conservation proof then needs the guard or a different booking representation. Test assumptions at the size where they become relevant.</p></details>
+<h2>Where TLAPS helps</h2>
+<p>TLAPS checks hierarchical proofs by sending each step’s obligation to backend provers. Break large obligations into named claims, and expose the definitions each one needs. An informal outline is not a checked proof. Consult the supported-feature list: the documented system focuses on safety reasoning and does not generally discharge arbitrary temporal liveness arguments.</p>
+<p>Use TLC to attack a candidate invariant before you spend time proving it, as in {{lesson:invariants}}. A finite run can refute a candidate quickly. It cannot prove the unbounded theorem.</p>
+<h2>Worked example: prove a cache cannot roll back a version</h2>
+<p>An app fetches a product description twice. Version 5 and version 4 are in flight, and the network delivers 5 first. A naive cache that accepts every response replaces the fresh value with the old one.</p>
+<pre><code>---------------- MODULE CacheVersion ----------------
+EXTENDS Naturals
+VARIABLES cacheVersion, pending
+vars == &lt;&lt;cacheVersion, pending&gt;&gt;
+Init == cacheVersion = 3 /\ pending = {4, 5}
+Accept(v) == /\ v \in pending
+             /\ v &gt;= cacheVersion
+             /\ cacheVersion' = v
+             /\ pending' = pending \ {v}
+Reject(v) == /\ v \in pending
+             /\ v &lt; cacheVersion
+             /\ pending' = pending \ {v}
+             /\ UNCHANGED cacheVersion
+Next == \E v \in pending: Accept(v) \/ Reject(v)
+Spec == Init /\ [][Next]_vars
+Monotonic == [][cacheVersion' &gt;= cacheVersion]_vars
+=====================================================</code></pre>
+<!--fig:good-->
+<p>This time the property is about steps, not states: <code>Monotonic</code> says every step keeps or raises the version. TLC finds 4 distinct states and no error. Delete the guard <code>v &gt;= cacheVersion</code> and it reports the bottom row of the diagram.</p>
+<p>The proof is short. For <code>Accept</code>, the guard gives <code>cacheVersion' &gt;= cacheVersion</code> directly. For <code>Reject</code> and stuttering, <code>cacheVersion</code> is unchanged. An action that resets <code>cacheVersion</code> must join this case split, even if it lives in another component, and this is where a proof tends to find what a design forgot.</p>
+<p>It assumes one key, one monotonically increasing version scheme, and immutable content for a given version. Incomparable version vectors or reused version numbers need a different model.</p>
+<h2>What the proof forces you to decide</h2>
+<p>Split <code>cacheVersion</code> into what is in memory and what is on disk, with <code>Persist</code> and <code>Restart</code> actions. Now there is a new case to prove, and it fails:</p>
+<pre><code>Restart == /\ volatile # durable
+           /\ volatile' = durable
+           /\ UNCHANGED &lt;&lt;durable, pending&gt;&gt;</code></pre>
+<!--fig:rest-->
+<p>TLC reports <code>Monotonic</code> violated in 2 steps. You must either persist the accepted version before showing it, weaken the contract to permit rollback after restart, or hold back older data until resynchronization. The proof makes that a design choice instead of a surprise.</p>
+<p>A proof of one property establishes exactly that property. A server could send version 100 with the wrong product’s text and <code>Accept</code> would take it. Add a key-match property and a mapping from version to content if you need them. And checking versions 3 to 5 with TLC can reveal a counterexample, but does not establish the claim for all numbers: the argument above does, because no step of it depends on which numbers they are.</p>
+<details class="answer"><summary>Transfer exercise: can a cache safely delete its version record on logout?</summary><p>It depends on the contract and scope. If the next login begins a new cache epoch with no promised cross-session monotonicity, clearing it may be valid. If old responses can still arrive and populate the new session, include session identity in the acceptance guard; otherwise an old authenticated response can cross the reset boundary.</p></details>
+<div class="quiz" data-answer="0" data-explain="Each step of an invariance proof is about all states satisfying Inv, whatever the constants. TLC only visits states for the constants in its config."><fieldset><legend>What can a proof of Inv establish that a completed TLC run of Buyers = {A, B} cannot?</legend><label><input type="radio" name="q-proofs" value="0">The claim for every set of buyers allowed by the assumptions</label><label><input type="radio" name="q-proofs" value="1">That the two-buyer case holds</label><label><input type="radio" name="q-proofs" value="2">Every liveness property of the system</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<p class="resources"><a target="_blank" rel="noopener noreferrer" href="https://proofs.tlapl.us/doc/web/content/Home.html">TLAPS documentation and tutorial</a>; <a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/tla/inductive-invariant.pdf">checking candidate inductive invariants with TLC</a>.</p>

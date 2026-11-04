@@ -1,0 +1,73 @@
+<h1>Find the interleaving that breaks the design.</h1>
+<p class="lead">In {{lesson:actions}}, one action was one indivisible step, and in {{lesson:transactions}} TLC tried the resource managers’ steps in every order. Here you use both ideas on purpose: you decide where one step ends, and TLC finds the order that breaks the design.</p>
+<!--fig:split-->
+<p>An <strong>interleaving</strong> is one order in which independent actors’ steps can happen. TLC does not simulate CPU instructions. It explores whichever steps you wrote, so choose the step boundaries from the guarantee your system actually has. The diagram shows why that matters: two buyers, one ticket, and a check that happens separately from the reservation. If A or B reserves before the other checks, that path dead-ends safely, as at the top and bottom. If both check first, the middle node, then the sale goes through twice.</p>
+<h2>Start with the guarantee you want</h2>
+<p>This module makes checking and updating one step, so <code>Reserve</code> is one edge in the graph.</p>
+<pre><code>---------------- MODULE Inventory ----------------
+EXTENDS Naturals, FiniteSets
+CONSTANT Buyers
+VARIABLES remaining, booked
+vars == &lt;&lt;remaining, booked&gt;&gt;
+Init == /\ remaining = 1
+        /\ booked = {}
+Reserve(b) ==
+    /\ remaining &gt; 0
+    /\ b \notin booked
+    /\ remaining' = remaining - 1
+    /\ booked' = booked \cup {b}
+Next == \E b \in Buyers: Reserve(b)
+Spec == Init /\ [][Next]_vars
+TypeOK == /\ remaining \in 0..1
+          /\ booked \in SUBSET Buyers
+Conservation == remaining + Cardinality(booked) = 1
+NoOverselling == Cardinality(booked) &lt;= 1
+==================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANT Buyers = {A, B}
+INVARIANT TypeOK
+INVARIANT Conservation
+INVARIANT NoOverselling
+CHECK_DEADLOCK FALSE</code></pre>
+<p>TLC finds 3 distinct states and no error. The diagram below is all of them.</p>
+<!--fig:atomic-->
+<p>This abstraction promises nothing about a database. It describes the guarantee a design must provide. Whether a real multi-step implementation provides it is the question from {{lesson:implementation}}.</p>
+<h2>Now split the step</h2>
+<p>Add a per-buyer stage. <code>Check</code> reads the stock and remembers the answer in the stage. <code>Reserve</code> relies on that memory and does not look again.</p>
+<pre><code>Check(b) ==
+    /\ pc[b] = "idle"
+    /\ remaining &gt; 0
+    /\ pc' = [pc EXCEPT ![b] = "checked"]
+    /\ UNCHANGED &lt;&lt;remaining, booked&gt;&gt;
+Reserve(b) ==
+    /\ pc[b] = "checked"
+    /\ remaining' = remaining - 1
+    /\ booked' = booked \cup {b}
+    /\ pc' = [pc EXCEPT ![b] = "done"]</code></pre>
+<p>The invariant is unchanged. TLC reports <code>NoOverselling</code> violated after 4 steps: both buyers check, then both reserve, leaving <code>remaining = -1</code> and <code>booked = {A, B}</code>. With the invariant removed, the whole graph has the 9 states in the first diagram.</p>
+<details class="answer"><summary>Predict: if you add <code>remaining &gt; 0</code> back to Reserve, what happens to the split model?</summary><p>The second reservation is disabled, so the double sale goes away. In doing so you moved the real decision back into one atomic step, because the test and the update now happen together in Reserve. The earlier Check no longer decides anything.</p></details>
+<div class="lab" id="ticket-lab"><h2>Check before committing</h2><div class="controls"><label>Atomic boundary <select id="ticket-mode"><option value="split">Separate check and reserve</option><option value="atomic">Atomic check and reserve</option></select></label><button id="ticket-next" type="button">Next step</button><button id="ticket-reset" type="button">Restart</button></div><div class="flow"><div class="node">Buyer A<small id="ticket-a"></small></div><div class="node">Inventory<small id="ticket-stock"></small></div><div class="node">Buyer B<small id="ticket-b"></small></div></div><div id="ticket-log" class="readout" aria-live="polite"></div></div>
+<p>The lab replays one path through each model. It is an educational replay, not TLC.</p>
+<details class="answer"><summary>Exercise: name an implementation guarantee needed by Reserve.</summary><p>The availability test and the successful update must form one indivisible decision. A conditional update can provide this if the database enforces the required concurrency semantics and the application checks whether it succeeded. A transaction boundary alone is not a proof: isolation and retries matter.</p></details>
+<div class="quiz" data-answer="1" data-explain="The invariant did not change. Only the step boundary changed, and that added the states where a buyer holds a stale check."><fieldset><legend>The atomic model passes and the split model fails the same invariant. What changed?</legend><label><input type="radio" name="q-inventory" value="0">The safety property got stronger</label><label><input type="radio" name="q-inventory" value="1">The step boundary, which added reachable states</label><label><input type="radio" name="q-inventory" value="2">The number of tickets</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>Concrete architecture: a shopping cart is not a reservation</h2>
+<p>Suppose a storefront has one camera left. Ada adds it to a cart, and Ben adds it to another cart. That is not overselling if carts only express interest. Two carts are allowed; two successful reservations of the one unit are not. Naming both concepts “selected” makes the design harder to reason about, so checkout must be the step that decides.</p>
+<p>Represent a reservation as a durable record keyed by request ID. On success, the stock count falls and the reservation appears in the same abstract step. Cancelling is the same move in reverse:</p>
+<pre><code>Cancel(b) ==          \* also models expiry of the hold
+    /\ b \in held
+    /\ held' = held \ {b}
+    /\ remaining' = remaining + 1
+    /\ UNCHANGED &lt;&lt;confirmed, paying&gt;&gt;</code></pre>
+<p>The guard blocks cancellation when no hold exists, and the two updates move the unit back. Cancelling the same hold twice is disabled, so stock cannot increase twice.</p>
+<p>Real products add expiry and payment. Then ask whether a delayed payment callback can confirm a hold that has already expired. The <code>TicketHold</code> model tests this with <code>Reserve</code>, <code>StartPayment</code>, <code>Cancel</code> (which also stands for expiry) and <code>LatePayment</code>:</p>
+<pre><code>LatePayment(b) ==
+    /\ b \in paying
+    /\ b \in held     \* delete this line to get the bug
+    /\ confirmed' = confirmed \cup {b}
+    /\ held' = held \ {b}
+    /\ paying' = paying \ {b}
+    /\ UNCHANGED remaining</code></pre>
+<p>With the guard <code>b \in held</code>, TLC finds 16 states and <code>OnePromise</code> holds. Delete that line and it fails in the 5 steps shown below.</p>
+<!--fig:hold-->
+<p>Look at the fourth step: A’s hold is gone and the ticket is back on sale, but A’s payment is still arriving. Confirmation checked only that a payment had started. Rechecking the hold closes this path. If the same buyer can reserve again after expiry, buyer identity is not enough, because an old callback would match the new hold. You would then need a reservation identity or generation.</p>
+<details class="answer"><summary>Exercise: does adding Cancel preserve the property “once booked, always booked”?</summary><p>No, and that may be intended. Conservation can still hold while bookings are removed. Choose properties that match the lifecycle: “at most one live reservation” is different from “a buyer never loses a reservation.”</p></details>

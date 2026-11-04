@@ -1,0 +1,3 @@
+---- MODULE OneDecreeForget ----
+EXTENDS OneDecree
+====

@@ -1,0 +1,245 @@
+<h1>Problem set 8: a spec is a formula, and implementing it is implying it.</h1>
+<p class="lead">Four problems on lecture 8: stuttering, reading formulas that are true or false of whole behaviors, and checking that one spec implements another with <code>PROPERTY</code>. The last problem asks whether the two-phase commit booking from {{ref:ps-l6}} and {{ref:ps-l7}} still implements all-or-nothing agreement once operators get a manual override.</p>
+<p>As before, every module shown was checked with TLC exactly as printed. When a problem uses <code>TwoPhase</code>, put the <code>TwoPhase</code> and <code>TCommit</code> modules from the lessons in the same folder.</p>
+
+<article class="problem" id="ps-l8-clock">
+<p class="problem-meta"><span>Problem 1</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">Infrastructure</span></p>
+<h2>Add minutes to the dashboard clock</h2>
+<p class="uses">Draws on {{ref:temporal}}, {{ref:implementation}} and {{ref:paxos-commit}}.</p>
+<p>An operations dashboard has a tile showing the current hour. The on-call team's alerting rules ("page only between 8 and 20") were written and reviewed against this tiny spec of the tile:</p>
+<pre><code>--------------------------- MODULE PSl8_HourClock ---------------------------
+\* The "current hour" tile on an ops dashboard: a 24-hour clock.
+EXTENDS Integers
+VARIABLE hr
+HInit == hr \in 0..23
+HNext == hr' = IF hr = 23 THEN 0 ELSE hr + 1
+HSpec == HInit /\ [][HNext]_hr
+=============================================================================</code></pre>
+<p>A redesign shows hours and minutes. The designer asks whether the alert rules must be reviewed again. They don't need to be if the new tile still satisfies the old spec, that is, if <code>Spec =&gt; HourSpec</code>. The new module imports the old one with a named <code>INSTANCE</code>, as <code>PaxosCommit</code> did with <code>TCommit</code>. It also includes the daylight-saving jump that product wants next quarter.</p>
+<pre><code>--------------------------- MODULE PSl8_Dashboard ---------------------------
+\* The redesigned tile shows hours and minutes. Does it still satisfy the
+\* hour-clock spec that the alerting rules were written against?
+EXTENDS Integers
+VARIABLES hr, min
+vars == &lt;&lt;hr, min&gt;&gt;
+Init == hr \in 0..23 /\ min \in 0..59
+Tick == /\ min' = IF min = 59 THEN 0 ELSE min + 1
+        /\ hr' = IF min = 59 THEN (IF hr = 23 THEN 0 ELSE hr + 1) ELSE hr
+\* Daylight saving time starts: the local clock jumps from 01:59 to 03:00.
+SpringForward == /\ hr = 1 /\ min = 59
+                 /\ hr' = 3 /\ min' = 0
+Spec == Init /\ [][Tick]_vars
+DSTSpec == Init /\ [][Tick \/ SpringForward]_vars
+
+H == INSTANCE PSl8_HourClock
+HourSpec == H!HSpec
+\* The same claim with stuttering allowed only when hr AND min are unchanged.
+HourSpecNoStutter == H!HInit /\ [][H!HNext]_vars
+=============================================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+PROPERTY HourSpec</code></pre>
+<ol class="tasks">
+<li>Take the behavior 13:58, 13:59, 14:00, 14:01. For each of its three steps, say whether it is an <code>HNext</code> step, a stuttering step of <code>HSpec</code>, or neither.</li>
+<li>Run the cfg as shown. Report TLC's result and the number of distinct states, and explain that number.</li>
+<li>Change the property to <code>HourSpecNoStutter</code>. What does TLC report, and how long is the trace?</li>
+<li>Change the specification to <code>DSTSpec</code> and the property back to <code>HourSpec</code>. Which step does TLC reject, and what should the team do about the alert rules?</li>
+</ol>
+<div class="numcheck" data-answer="1440" data-explain="24 hours × 60 minutes. Init allows any of them, and Tick moves around the same 1440 states." data-retry="Init already allows every hour and every minute."><label>Distinct states TLC reports for task 2 <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="0" data-explain="HSpec mentions only hr. A state assigns values to every variable, and HSpec says nothing about min, so min may change in any way, including on a step that also advances hr."><fieldset><legend>A behavior goes 10:05, then 10:37, then 11:02. Does it satisfy <code>HourSpec</code>?</legend><label><input type="radio" name="q-ps-l8-clock" value="0">Yes: the first step leaves hr unchanged and the second is an HNext step</label><label><input type="radio" name="q-ps-l8-clock" value="1">No: minutes may only increase by one</label><label><input type="radio" name="q-ps-l8-clock" value="2">The question makes no sense, since HourSpec has no variable min</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p><code>[HNext]_hr</code> is <code>HNext \/ UNCHANGED hr</code>. A step that changes only <code>min</code> satisfies the second disjunct. <code>HourSpecNoStutter</code> excuses a step only when <code>&lt;&lt;hr, min&gt;&gt;</code> is unchanged.</p></details>
+<details class="answer solution"><summary>Solution</summary><p><strong>1.</strong> 13:58 → 13:59 leaves <code>hr</code> unchanged, so it's a stuttering step of <code>HSpec</code>. 13:59 → 14:00 is an <code>HNext</code> step. 14:00 → 14:01 is stuttering again. The diagram marks each one.</p>
+<!--fig:clock-->
+<p><strong>2.</strong> No error, 1440 distinct states. Every state of the dashboard is reachable, as <code>Init</code> allows all 24 × 60. So <code>Spec =&gt; HourSpec</code> holds on this model: whatever the alert rules relied on about the hour tile is still true.</p>
+<p><strong>3.</strong> TLC reports the action property violated after 2 states, on the first <code>Tick</code> it tries (in this run, 0:04 → 0:05). Nearly every tick changes <code>min</code> but not <code>hr</code>. If stuttering meant "nothing changes at all", the hour spec would forbid the minutes from moving, and no clock with a finer display could ever implement it. That's the reason every spec allows steps that leave its own variables unchanged.</p>
+<p><strong>4.</strong> TLC reports the action property of <code>HourSpec</code> violated after 2 states: from 01:59, <code>SpringForward</code> sets <code>hr</code> to 3. That's neither <code>hr' = hr + 1</code> nor stuttering. Any alert rule that assumed every hour is visited (for example "the 02:00 batch job always runs") must be reviewed, and that rule really does break on such a night. The spec found the one change that matters and accepted the rest.</p></details>
+</article>
+
+<article class="problem" id="ps-l8-dialog">
+<p class="problem-meta"><span>Problem 2</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">Design system</span></p>
+<h2>Read temporal formulas on a confirm dialog</h2>
+<p class="uses">Draws on {{ref:temporal}}, {{ref:implementation}} and {{ref:states}}.</p>
+<p>A design system has a ConfirmDialog component: the user opens it, then confirms or cancels. Confirm runs an async request. While the request is in flight, the dialog shows a spinner, and the form must not come back. If the request fails, an error is shown with Retry and Cancel. The component team writes the contract as a spec, then writes a few properties that QA asked for as temporal formulas:</p>
+<pre><code>---------------------------- MODULE PSl8_Dialog -----------------------------
+\* A design-system confirm dialog whose Confirm button runs an async request.
+VARIABLE dialog
+Status == {"closed", "open", "submitting", "error"}
+Init == dialog = "closed"
+Open    == dialog = "closed"     /\ dialog' = "open"
+Cancel  == dialog \in {"open", "error"} /\ dialog' = "closed"
+Confirm == dialog = "open"       /\ dialog' = "submitting"
+Succeed == dialog = "submitting" /\ dialog' = "closed"
+Fail    == dialog = "submitting" /\ dialog' = "error"
+Retry   == dialog = "error"      /\ dialog' = "submitting"
+Next == Open \/ Cancel \/ Confirm \/ Succeed \/ Fail \/ Retry
+Spec == Init /\ [][Next]_dialog
+
+TypeOK == dialog \in Status
+AlwaysTypeOK == []TypeOK
+\* While a request is in flight the form never reappears.
+NoReopenWhileBusy == [][dialog = "submitting" =&gt; dialog' # "open"]_dialog
+\* An error is shown only right after a request.
+ErrorOnlyAfterSubmit == [][dialog' = "error" =&gt; dialog = "submitting"]_dialog
+\* Once closed, the dialog stays closed (a wrong claim, for comparison).
+ClosedIsFinal == [][dialog = "closed" =&gt; dialog' = "closed"]_dialog
+=============================================================================</code></pre>
+<!--fig:dialog-->
+<p>Here are four behaviors taken from bug reports and tests. Each one continues by stuttering forever after its last state.</p>
+<!--fig:behaviors-->
+<ol class="tasks">
+<li>For each of B1 to B4, decide whether it satisfies <code>Spec</code>, <code>AlwaysTypeOK</code> and <code>NoReopenWhileBusy</code>.</li>
+<li>Is the formula <code>Spec =&gt; NoReopenWhileBusy</code> true on B2? On B3?</li>
+<li>Check the contract with TLC using the cfg below. Then add <code>PROPERTY ClosedIsFinal</code> and run it again. Report both results.</li>
+</ol>
+<pre><code>SPECIFICATION Spec
+INVARIANT TypeOK
+PROPERTY NoReopenWhileBusy
+PROPERTY ErrorOnlyAfterSubmit</code></pre>
+<div class="numcheck" data-answer="2|two" data-explain="B1 and B4. B2 has a step submitting → open that no action allows and that changes dialog. B3 starts in open, so Init is false. B4 is all stuttering, which Spec allows." data-retry="Check Init on the first state, then each step: an action of Next, or dialog unchanged."><label>How many of B1 to B4 satisfy <code>Spec</code>? <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="B2 doesn't satisfy Spec, so the implication is true on it, whatever the right side says. P =&gt; Q is FALSE only when P is TRUE and Q is FALSE."><fieldset><legend>B2 violates <code>NoReopenWhileBusy</code>. What is the value of <code>Spec =&gt; NoReopenWhileBusy</code> on B2?</legend><label><input type="radio" name="q-ps-l8-dialog" value="0">FALSE, since the right side is false</label><label><input type="radio" name="q-ps-l8-dialog" value="1">TRUE, since the left side is false</label><label><input type="radio" name="q-ps-l8-dialog" value="2">It has no value, since B2 is not a behavior of Spec</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>A state formula such as <code>Init</code>, used as a temporal formula, is about the first state only. <code>[][A]_dialog</code> is about every step, and a step where <code>dialog</code> doesn't change satisfies it whatever <code>A</code> says.</p></details>
+<details class="answer solution"><summary>Solution</summary><p><strong>1.</strong></p>
+<div class="table-wrap"><table><thead><tr><th>Behavior</th><th><code>Spec</code></th><th><code>AlwaysTypeOK</code></th><th><code>NoReopenWhileBusy</code></th></tr></thead><tbody>
+<tr><td>B1</td><td>TRUE</td><td>TRUE</td><td>TRUE</td></tr>
+<tr><td>B2</td><td>FALSE: submitting → open is no action of Next</td><td>TRUE</td><td>FALSE: that same step</td></tr>
+<tr><td>B3</td><td>FALSE: <code>Init</code> fails on the first state</td><td>TRUE</td><td>TRUE</td></tr>
+<tr><td>B4</td><td>TRUE: every step is stuttering</td><td>TRUE</td><td>TRUE</td></tr>
+</tbody></table></div>
+<p>B3 shows that a property can hold on a behavior the spec rejects. Only B2 breaks the rule QA cares about, and it's the real double-submit bug: a failed request should go to <code>"error"</code>, not reopen the form. These values were confirmed by replaying each behavior in TLC.</p>
+<p><strong>2.</strong> TRUE on B2 and TRUE on B3. Neither satisfies <code>Spec</code>, so the implication asserts nothing about them. The implication fails only on a behavior that satisfies <code>Spec</code> and breaks the property. TLC's run in task 3 shows there is none.</p>
+<p><strong>3.</strong> No error, 4 distinct states, with <code>TypeOK</code> invariant and both action properties holding. With <code>ClosedIsFinal</code> added, TLC reports it violated after 2 states: <code>closed</code> → <code>open</code> by <code>Open</code>. That's a step of <code>Spec</code> that changes <code>dialog</code> away from <code>"closed"</code>, which is exactly what the property forbids. Having a deliberately wrong property fail is a cheap check that TLC is reading your properties the way you meant them.</p></details>
+</article>
+
+<article class="problem" id="ps-l8-cache">
+<p class="problem-meta"><span>Problem 3</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Databases</span></p>
+<h2>Does the cache implement the store?</h2>
+<p class="uses">Draws on {{ref:implementation}}, {{ref:temporal}}, {{ref:sets}} and {{ref:paxos-commit}}.</p>
+<p>Clients of a key-value store see two operations: put a value, and get the current value of a key. The platform team's spec of what clients may observe records in <code>out</code> what the last get returned:</p>
+<pre><code>------------------------------ MODULE PSl8_KV -------------------------------
+\* What clients of the key-value store may observe. out is the value the
+\* most recent Get returned ("none" before the first Get).
+CONSTANTS Key, Val
+VARIABLES store, out
+KVInit == /\ store \in [Key -&gt; Val]
+          /\ out = "none"
+Put(k, v) == /\ store' = [store EXCEPT ![k] = v]
+             /\ out' = out
+Get(k) == /\ out' = store[k]
+          /\ store' = store
+KVNext == \E k \in Key : Get(k) \/ \E v \in Val : Put(k, v)
+KVSpec == KVInit /\ [][KVNext]_&lt;&lt;store, out&gt;&gt;
+=============================================================================</code></pre>
+<p>To cut database load, the team puts a cache in front of the store. Reads use the cached copy if there is one. Writes are write-through: the database and the cache change together. Fill and Evict are background work. A refactor accidentally replaced <code>Put</code> with <code>PutNoInvalidate</code>, which writes the database and leaves the cache alone.</p>
+<pre><code>----------------------------- MODULE PSl8_Cache -----------------------------
+\* The same store with a cache in front of it. cache[k] is "miss" or a copy.
+CONSTANTS Key, Val
+VARIABLES store, out, cache
+vars == &lt;&lt;store, out, cache&gt;&gt;
+Init == /\ store \in [Key -&gt; Val]
+        /\ out = "none"
+        /\ cache = [k \in Key |-&gt; "miss"]
+\* Write-through: the database and the cache change in one step.
+Put(k, v) == /\ store' = [store EXCEPT ![k] = v]
+             /\ cache' = [cache EXCEPT ![k] = v]
+             /\ out' = out
+\* The bug: write to the database and forget the cached copy.
+PutNoInvalidate(k, v) == /\ store' = [store EXCEPT ![k] = v]
+                         /\ UNCHANGED &lt;&lt;cache, out&gt;&gt;
+Fill(k)  == /\ cache[k] = "miss"
+            /\ cache' = [cache EXCEPT ![k] = store[k]]
+            /\ UNCHANGED &lt;&lt;store, out&gt;&gt;
+Evict(k) == /\ cache[k] # "miss"
+            /\ cache' = [cache EXCEPT ![k] = "miss"]
+            /\ UNCHANGED &lt;&lt;store, out&gt;&gt;
+Get(k) == /\ out' = IF cache[k] = "miss" THEN store[k] ELSE cache[k]
+          /\ UNCHANGED &lt;&lt;store, cache&gt;&gt;
+Next == \E k \in Key : \/ Get(k) \/ Fill(k) \/ Evict(k)
+                       \/ \E v \in Val : Put(k, v)
+BugNext == \E k \in Key : \/ Get(k) \/ Fill(k) \/ Evict(k)
+                          \/ \E v \in Val : PutNoInvalidate(k, v)
+Spec == Init /\ [][Next]_vars
+BugSpec == Init /\ [][BugNext]_vars
+
+KV == INSTANCE PSl8_KV
+KVSpec == KV!KVSpec
+THEOREM Spec =&gt; KVSpec
+=============================================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Key = {"k1", "k2"}
+          Val = {"v1", "v2"}
+PROPERTY KVSpec</code></pre>
+<ol class="tasks">
+<li>For each action of <code>Next</code> (<code>Put</code>, <code>Get</code>, <code>Fill</code>, <code>Evict</code>), say whether its steps are <code>KVNext</code> steps or stuttering steps of <code>KVSpec</code>.</li>
+<li>Run the cfg as shown and report the result.</li>
+<li>Change the specification to <code>BugSpec</code>. Report the trace, and for each step in it say what <code>KVSpec</code> makes of it.</li>
+<li>Another team builds a write-back cache: <code>Put</code> writes only the cache, and a later <code>Flush</code> copies it to the database. Without running it, predict whether TLC would accept <code>PROPERTY KVSpec</code> for that design. Does the answer mean the write-back cache is wrong?</li>
+</ol>
+<div class="numcheck" data-answer="4|four" data-explain="Fill, PutNoInvalidate, Get: three steps after the initial state." data-retry="The cache starts empty, so something has to fill it first."><label>Number of states in TLC's trace for <code>BugSpec</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="2" data-explain="Evict changes only cache. KVSpec's variables are store and out, both unchanged, so the step is a stuttering step of KVSpec and is allowed."><fieldset><legend>To <code>KVSpec</code>, an <code>Evict</code> step is</legend><label><input type="radio" name="q-ps-l8-cache" value="0">a Put step that writes "miss"</label><label><input type="radio" name="q-ps-l8-cache" value="1">a violation, since cache changed</label><label><input type="radio" name="q-ps-l8-cache" value="2">a stuttering step</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p><code>KVSpec</code> sees only <code>store</code> and <code>out</code>. A <code>Get</code> step is a <code>KVNext</code> step only if the new <code>out</code> equals <code>store[k]</code>. When can <code>cache[k]</code> differ from <code>store[k]</code>?</p></details>
+<details class="answer solution"><summary>Solution</summary><p><strong>1.</strong> <code>Put(k, v)</code> is a <code>KV!Put(k, v)</code> step: <code>store</code> changes the same way and <code>out</code> is unchanged. <code>Fill</code> and <code>Evict</code> change only <code>cache</code>, so they're stuttering steps. <code>Get(k)</code> sets <code>out</code> to the cached copy or to <code>store[k]</code>. It's a <code>KV!Get(k)</code> step as long as every cached copy equals the stored value, which holds in every reachable state of <code>Spec</code>, because <code>Put</code> updates both.</p>
+<p><strong>2.</strong> No error, 48 distinct states: 4 stores × 4 consistent caches (each key missing or equal to the store) × 3 values of <code>out</code>.</p>
+<p><strong>3.</strong> TLC reports the action property of <code>KVSpec</code> violated after 4 states:</p>
+<!--fig:cache-->
+<p><code>Fill("k1")</code> copies <code>"v2"</code>: stuttering. <code>PutNoInvalidate("k1","v1")</code> sets the store to <code>"v1"</code>: a <code>KV!Put</code> step, still fine. <code>Get("k1")</code> returns the cached <code>"v2"</code> while <code>store["k1"]</code> is <code>"v1"</code>, so <code>out</code> changes to a value <code>KV!Get</code> doesn't allow. The bug happens in step 2, and the client sees it in step 3. That's typical: the high-level spec flags a problem only when it becomes observable.</p>
+<p><strong>4.</strong> TLC would reject it. A write-back <code>Put</code> leaves <code>store</code> and <code>out</code> unchanged, so <code>KVSpec</code> treats it as stuttering. The next <code>Get</code> returns the new value while <code>store</code> still holds the old one, and that's not a <code>KV!Get</code> step. A hidden run of this design gives exactly that 3-state trace. But the design may be perfectly correct: what a client observes as "the store" is the cached value when it is dirty, not the database row. The check failed because the implementation's variable <code>store</code> isn't the right thing to compare with the spec's <code>store</code>. Lecture 10 shows how to state that comparison with an expression in place of a variable of the same name.</p></details>
+</article>
+
+<article class="problem" id="ps-l8-heuristic">
+<p class="problem-meta"><span>Problem 4</span><span class="level" title="Difficulty 3 of 3">●●●</span><span class="domain">Databases</span></p>
+<h2>Synthesis: the operator's rollback button</h2>
+<p class="uses">Draws on {{ref:implementation}}, {{ref:transactions}}, {{ref:tcommit}}, {{ref:ps-l5}}, {{ref:ps-l6}} and {{ref:ps-l7}}.</p>
+<p>The trip booking (flight, hotel, car) still runs two-phase commit. After the coordinator outage in {{ref:ps-l7}}, operations wrote a runbook step: "If a reservation has been prepared for more than ten minutes, roll it back by hand." Some transaction managers offer exactly this escape hatch for in-doubt participants, often called a heuristic decision. Your job is to check it against all-or-nothing agreement, written in the style of TCommit as in {{ref:ps-l5}}, and now as one formula.</p>
+<pre><code>--------------------------- MODULE PSl8_Agreement ---------------------------
+\* All-or-nothing agreement, TCommit with its spec written as one formula.
+CONSTANT RM
+VARIABLE rmState
+AInit == rmState = [r \in RM |-&gt; "working"]
+canCommit == \A r \in RM : rmState[r] \in {"prepared", "committed"}
+notCommitted == \A r \in RM : rmState[r] # "committed"
+Prepare(r) == /\ rmState[r] = "working"
+              /\ rmState' = [rmState EXCEPT ![r] = "prepared"]
+Decide(r) == \/ /\ rmState[r] = "prepared"
+                /\ canCommit
+                /\ rmState' = [rmState EXCEPT ![r] = "committed"]
+             \/ /\ rmState[r] \in {"working", "prepared"}
+                /\ notCommitted
+                /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
+ANext == \E r \in RM : Prepare(r) \/ Decide(r)
+ASpec == AInit /\ [][ANext]_rmState
+=============================================================================</code></pre>
+<p>The booking module extends the lesson's <code>TwoPhase</code>. It defines its spec as a formula and adds the operator's action. Because <code>PSl8_Agreement</code> has the same variable <code>rmState</code> and constant <code>RM</code>, <code>INSTANCE</code> matches them by name.</p>
+<pre><code>---------------------------- MODULE PSl8_Booking ----------------------------
+\* Two-phase commit for the trip booking, plus the operator's escape hatch:
+\* a participant stuck in "prepared" can be forced to roll back by hand.
+EXTENDS TwoPhase
+BookSpec == TPInit /\ [][TPNext]_vars
+
+HeuristicAbort(r) == /\ rmState[r] = "prepared"
+                     /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
+                     /\ UNCHANGED &lt;&lt;tmState, tmPrepared, msgs&gt;&gt;
+OpsNext == TPNext \/ \E r \in RM : HeuristicAbort(r)
+OpsSpec == TPInit /\ [][OpsNext]_vars
+
+AG == INSTANCE PSl8_Agreement
+Agreement == AG!ASpec
+THEOREM BookSpec =&gt; Agreement
+=============================================================================</code></pre>
+<pre><code>SPECIFICATION BookSpec
+CONSTANT RM = {"flight", "hotel", "car"}
+PROPERTY Agreement</code></pre>
+<ol class="tasks">
+<li>Run the cfg as shown. Report the result, and say one thing the theorem guarantees and one thing it doesn't.</li>
+<li>Without TLC: all three RMs are prepared and nothing has been decided. Is a <code>HeuristicAbort("flight")</code> step from there an <code>ANext</code> step?</li>
+<li>Change the specification to <code>OpsSpec</code>. Report the trace length and the first step that is neither an <code>ANext</code> step nor stuttering for <code>Agreement</code>.</li>
+<li>A reviewer suggests a guard: allow <code>HeuristicAbort</code> only while no Commit message has been sent. Would that make <code>OpsSpec</code> implement <code>Agreement</code>? What guard would, and who can check it?</li>
+</ol>
+<div class="numcheck" data-answer="10|ten" data-explain="Nine steps: prepares and TM receipts for all three RMs, one heuristic abort, TMCommit, and the receipt of Commit that breaks agreement. TLC's breadth-first search makes this the shortest such behavior." data-retry="The TM can only commit after it has recorded three Prepared messages."><label>Number of states in TLC's trace for <code>OpsSpec</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="2" data-explain="TMCommit changes only tmState and msgs, so it's stuttering for Agreement. The heuristic abort is an allowed Decide step. The first step Agreement rejects is the one where an RM commits while another has aborted."><fieldset><legend>Which step does <code>Agreement</code> reject in TLC's trace?</legend><label><input type="radio" name="q-ps-l8-heuristic" value="0">The <code>HeuristicAbort</code> step</label><label><input type="radio" name="q-ps-l8-heuristic" value="1">The <code>TMCommit</code> step</label><label><input type="radio" name="q-ps-l8-heuristic" value="2">An <code>RMRcvCommitMsg</code> step</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Write out <code>Decide(r)</code>'s abort branch and evaluate it on the state in task 2. For task 4, ask whether the TM could still send Commit after the guard was checked. What has the TM already recorded?</p></details>
+<details class="answer solution"><summary>Solution</summary><p><strong>1.</strong> No error, 288 distinct states: <code>BookSpec =&gt; Agreement</code> holds on this model. It guarantees that every step the protocol takes changes <code>rmState</code> in a way agreement allows. It doesn't guarantee that anything is ever decided. A behavior that stutters forever satisfies both sides, and the coordinator crash of {{ref:ps-l7}} is still possible.</p>
+<p><strong>2.</strong> Yes. The abort branch of <code>Decide("flight")</code> needs <code>rmState["flight"] \in {"working", "prepared"}</code> and <code>notCommitted</code>, and both hold. Taken alone, the operator's step looks like a legal abort.</p>
+<p><strong>3.</strong> TLC reports the action property of <code>Agreement</code> violated after 10 states. The run here:</p>
+<!--fig:heur-->
+<p>States 2 to 5: hotel and flight prepare and the TM records both. State 6: <code>HeuristicAbort("flight")</code>, an allowed abort. States 7 to 9: car prepares, the TM records it, and <code>TMCommit</code> sends Commit, because <code>tmPrepared = RM</code> no matter what flight did afterwards. That's stuttering for <code>Agreement</code>. State 10: <code>RMRcvCommitMsg("flight")</code> moves flight from aborted to committed. <code>TwoPhase</code>'s receive action has no guard on the RM's state, since in the real protocol a prepared RM can't have aborted. Your run may end instead with hotel or car committing while flight is aborted. Either way, the step that breaks the high-level spec is a commit receipt, three steps after the cause.</p>
+<p><strong>4.</strong> No. TLC rejects the guarded version too, again in 10 states. The TM recorded flight's Prepared before the operator acted, and nothing tells it to forget. The only safe guard is that the TM has decided Abort, and then the heuristic is just <code>RMRcvAbortMsg</code>. In other words, the decision has to be made at the coordinator, which is the process that's down. The check shows why the runbook step is dangerous: once you allow it, all-or-nothing is no longer a property of the system, and any mixed outcome has to be found and repaired by hand.</p></details>
+</article>

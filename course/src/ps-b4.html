@@ -1,0 +1,387 @@
+<h1>Problem set 14: decide which answer is allowed to land.</h1>
+<p class="lead">These problems practice the fourth Beyond part: responses that arrive after the user has moved on, cache fills that arrive after the data changed, and contracts that hold across several layers. They draw on {{ref:app-state}}, {{ref:cache}} and {{ref:capstone}}, with {{ref:fencing}}, {{ref:messages}}, {{ref:fairness}} and {{ref:replication}} from earlier parts.</p>
+<p>All the modules are complete and were checked with TLC exactly as shown. Trace lengths come from TLC with one worker (<code>-workers 1</code>) and count the initial state. In every problem the bug is the same shape: a result that was correct when produced arrives where something newer already decided. Look for that shape before you run anything.</p>
+
+<article class="problem" id="ps-b4-combobox">
+<p class="problem-meta"><span>Problem 1</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">Design systems</span></p>
+<h2>The combobox that shows options for "al" after you typed "ali"</h2>
+<p class="uses">Draws on {{ref:app-state}}, {{ref:messages}} and {{ref:fencing}}.</p>
+<p>Your design system's Combobox loads its options asynchronously: on every keystroke it calls the product team's <code>loadOptions(query)</code> and renders the result in the listbox. A bug report: in the "Assign to" field, a user typed "al", then quickly "ali", pressed Enter, and assigned the ticket to Alan instead of Alice. The listbox was showing the options for "al".</p>
+<p>The component team already aborts the previous request with an <code>AbortController</code> on each keystroke, and believes that rules this out. In the module, <code>inflight</code> holds requests still on the network, which an abort can cancel. <code>queued</code> holds responses whose body has already been read, so their continuation is waiting to run and an abort no longer stops it. <code>Mode</code> is <code>"Plain"</code> (render every response), <code>"Abort"</code> (cancel everything in flight on each keystroke) or <code>"RequestId"</code> (render only if the response's ID is still <code>latest</code>, as in {{ref:app-state}}).</p>
+<pre><code>---------------- MODULE PSb4_Combobox ----------------
+EXTENDS Naturals
+CONSTANT Mode
+ASSUME Mode \in {"Plain", "Abort", "RequestId"}
+Requests == 1..2
+Query == [r \in Requests |-&gt; IF r = 1 THEN "al" ELSE "ali"]
+VARIABLES latest,   \* id of the request for the text now in the input
+          inflight, \* requests still on the network (abortable)
+          queued,   \* responses received; their callbacks have not run
+          list      \* the listbox: [tag |-&gt; "closed"], [tag |-&gt; "loading"]
+                    \* or [tag |-&gt; "open", query |-&gt; the query it shows]
+vars == &lt;&lt;latest, inflight, queued, list&gt;&gt;
+
+Init == /\ latest = 0
+        /\ inflight = {}
+        /\ queued = {}
+        /\ list = [tag |-&gt; "closed"]
+
+\* The user types a character: a new request starts. In Abort mode
+\* the component aborts every request still on the network.
+Type == /\ latest &lt; 2
+        /\ latest' = latest + 1
+        /\ inflight' = IF Mode = "Abort" THEN {latest + 1}
+                       ELSE inflight \cup {latest + 1}
+        /\ list' = [tag |-&gt; "loading"]
+        /\ UNCHANGED queued
+
+\* The response body has been read; the callback is queued.
+Arrive(r) == /\ r \in inflight
+             /\ inflight' = inflight \ {r}
+             /\ queued' = queued \cup {r}
+             /\ UNCHANGED &lt;&lt;latest, list&gt;&gt;
+
+\* The callback runs and (perhaps) renders the options.
+Render(r) == /\ r \in queued
+             /\ queued' = queued \ {r}
+             /\ list' = IF Mode = "RequestId" /\ r # latest
+                           THEN list
+                           ELSE [tag |-&gt; "open", query |-&gt; Query[r]]
+             /\ UNCHANGED &lt;&lt;latest, inflight&gt;&gt;
+
+Next == Type \/ \E r \in Requests : Arrive(r) \/ Render(r)
+Spec == Init /\ [][Next]_vars
+
+\* An open listbox shows options for the text in the input.
+MatchesInput == list.tag = "open" =&gt; list.query = Query[latest]
+======================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANT Mode = "Abort"
+INVARIANT MatchesInput
+CHECK_DEADLOCK FALSE</code></pre>
+<!--fig:abort-->
+<ol class="tasks">
+<li>Run <code>"Plain"</code>. Describe the trace in terms of keystrokes and network events.</li>
+<li>Run <code>"Abort"</code>. What had already happened to request 1 when the user typed "ali"?</li>
+<li>Run <code>"RequestId"</code> and report the distinct states. Then explain whether the component should still abort old requests.</li>
+<li><code>MatchesInput</code> is a property of what the listbox shows. Say in one sentence why that, and not "no stale response is ever received", is the property to check.</li>
+</ol>
+<div class="numcheck" data-answer="13|thirteen" data-explain="With the ID check, TLC finds 13 distinct states and no error: a stale callback still runs, but it only removes its request from queued." data-retry="Use Mode = &quot;RequestId&quot; with the module exactly as shown."><label>Distinct states for <code>"RequestId"</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="TLC's Abort trace is Type, Arrive(1), Type, Render(1). Request 1 left inflight before the second keystroke, so the abort found nothing to cancel."><fieldset><legend>In TLC's <code>"Abort"</code> trace, where was request 1 when the second keystroke aborted the in-flight requests?</legend><label><input type="radio" name="q-ps-b4-combobox" value="0">Still on the network, but the abort was ignored</label><label><input type="radio" name="q-ps-b4-combobox" value="1">Already received, with its callback queued</label><label><input type="radio" name="q-ps-b4-combobox" value="2">Already rendered</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>An abort acts on the network request. Ask what it can do to a response that has already been read.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>1.</strong> <code>MatchesInput</code> fails after 5 states: <code>Type</code> ("al", request 1), <code>Type</code> ("ali", request 2), <code>Arrive(1)</code>, <code>Render(1)</code>. The listbox is open with the options for "al" while the input says "ali". Request 2 has not even arrived, so the stale render does not need responses to cross; any old response landing while a newer request is pending is enough.</p>
+<p><strong>2.</strong> Also 5 states, in a different order: <code>Type</code>, <code>Arrive(1)</code>, <code>Type</code>, <code>Render(1)</code>. Request 1's response had been read, so its continuation was already queued; the abort on the second keystroke had nothing on the network to cancel. The diagram draws it. In real code this is the window between <code>await response.json()</code> resolving and the continuation that calls <code>setOptions</code> running.</p>
+<p><strong>3.</strong> No error, 13 distinct states. The ID check sits in the same synchronous step as the render, so no later event can come between them; that is the boundary {{ref:app-state}} identified. Keep the abort as an optimization. It saves bandwidth and server work for requests that are still on the network, but correctness must not depend on it, because it cannot reach a response that has already arrived.</p>
+<p><strong>4.</strong> Stale responses are normal and harmless; the user only sees the listbox. A property about receipt would fail in the correct design too, and a property about the screen fails exactly when a user could pick the wrong person. In a design system this matters doubly: the component owns the guard, so every product team that passes a <code>loadOptions</code> gets it.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-b4-lease">
+<p class="problem-meta"><span>Problem 2</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Databases</span></p>
+<h2>Cache-aside with leases: the stale set and the write order</h2>
+<p class="uses">Draws on {{ref:cache}}, {{ref:fencing}}, {{ref:inventory}} and {{ref:scaling}}.</p>
+<p>A product service reads prices with the cache-aside pattern. A reader does <code>GET</code> from a memcached-style cache; on a miss it reads the database and <code>SET</code>s the value. A writer updates the database and then <code>DELETE</code>s the key. Prices occasionally stay wrong until the key's TTL runs out. Facebook's paper "Scaling Memcache at Facebook" (NSDI 2013) describes a fix it calls <em>leases</em>. On a miss the cache hands the reader a lease token. A <code>DELETE</code> of the key invalidates the token, and a <code>SET</code> carrying an invalid token is refused.</p>
+<p>In the module, versions stand for values. One reader and one writer run, and the writer makes up to two updates. <code>Leases</code> turns the tokens on, and <code>DeleteFirst</code> makes the writer delete the key before updating the database instead of after. The property allows a stale cache only while a write is in progress: once the writer is idle, a cached value must be current.</p>
+<pre><code>---------------- MODULE PSb4_CacheAside ----------------
+EXTENDS Naturals
+CONSTANTS Leases, DeleteFirst, MaxVersion
+ASSUME Leases \in BOOLEAN /\ DeleteFirst \in BOOLEAN
+VARIABLES db,       \* the row's version in the database
+          cache,    \* the cached version, or 0 for a miss
+          lease,    \* the cache's outstanding lease token, 0 for none
+          tokens,   \* lease tokens issued so far
+          rpc,      \* reader: "idle", "reading" or "setting"
+          rtoken,   \* the lease token the reader holds
+          rval,     \* the version the reader read from the database
+          wpc       \* writer: "idle", "updated" or "deleted"
+vars == &lt;&lt;db, cache, lease, tokens, rpc, rtoken, rval, wpc&gt;&gt;
+
+Init == /\ db = 1 /\ cache = 0 /\ lease = 0 /\ tokens = 0
+        /\ rpc = "idle" /\ rtoken = 0 /\ rval = 0
+        /\ wpc = "idle"
+
+\* Reader: GET misses. With leases, the cache hands out a token.
+Miss == /\ rpc = "idle" /\ cache = 0
+        /\ IF Leases THEN /\ tokens' = tokens + 1
+                          /\ lease' = tokens + 1
+                          /\ rtoken' = tokens + 1
+                     ELSE UNCHANGED &lt;&lt;tokens, lease, rtoken&gt;&gt;
+        /\ rpc' = "reading"
+        /\ UNCHANGED &lt;&lt;db, cache, rval, wpc&gt;&gt;
+\* Reader: SELECT from the database.
+Read == /\ rpc = "reading"
+        /\ rval' = db
+        /\ rpc' = "setting"
+        /\ UNCHANGED &lt;&lt;db, cache, lease, tokens, rtoken, wpc&gt;&gt;
+\* Reader: SET the value. With leases, only if the token is still valid.
+Set == /\ rpc = "setting"
+       /\ IF ~Leases \/ lease = rtoken
+             THEN cache' = rval /\ lease' = 0
+             ELSE UNCHANGED &lt;&lt;cache, lease&gt;&gt;
+       /\ rpc' = "idle"
+       /\ UNCHANGED &lt;&lt;db, tokens, rtoken, rval, wpc&gt;&gt;
+
+\* Writer: UPDATE the database and DELETE the cache key, in either order.
+\* A delete also invalidates any outstanding lease.
+Update == /\ db &lt; MaxVersion
+          /\ wpc = IF DeleteFirst THEN "deleted" ELSE "idle"
+          /\ db' = db + 1
+          /\ wpc' = IF DeleteFirst THEN "idle" ELSE "updated"
+          /\ UNCHANGED &lt;&lt;cache, lease, tokens, rpc, rtoken, rval&gt;&gt;
+Delete == /\ wpc = IF DeleteFirst THEN "idle" ELSE "updated"
+          /\ (DeleteFirst =&gt; db &lt; MaxVersion)
+          /\ cache' = 0 /\ lease' = 0
+          /\ wpc' = IF DeleteFirst THEN "deleted" ELSE "idle"
+          /\ UNCHANGED &lt;&lt;db, tokens, rpc, rtoken, rval&gt;&gt;
+
+Next == Miss \/ Read \/ Set \/ Update \/ Delete
+Spec == Init /\ [][Next]_vars
+
+\* Once the writer has finished, a cached value is the current one.
+FreshAfterWrite == (wpc = "idle" /\ cache # 0) =&gt; cache = db
+=========================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Leases = TRUE
+          DeleteFirst = FALSE
+          MaxVersion = 3
+INVARIANT FreshAfterWrite
+CHECK_DEADLOCK FALSE</code></pre>
+<!--fig:lease-->
+<ol class="tasks">
+<li>Run with <code>Leases = FALSE</code>, <code>DeleteFirst = FALSE</code>. Write the trace as a sequence of reader and writer operations.</li>
+<li>Run the configuration shown (leases, update then delete). Report the distinct states, and say which step of the task 1 trace the lease refuses.</li>
+<li>A teammate says deleting first is safer, "because the cache is already empty when the database changes". Run <code>DeleteFirst = TRUE</code> with and without leases, and explain the result.</li>
+<li>Why is the property not simply <code>cache # 0 =&gt; cache = db</code>?</li>
+</ol>
+<div class="numcheck" data-answer="70|seventy" data-explain="TLC finds 70 distinct states and no error with leases and the update-then-delete order." data-retry="Set Leases = TRUE, DeleteFirst = FALSE and MaxVersion = 3."><label>Distinct states with leases and update-then-delete (task 2) <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="0" data-explain="With delete first, the reader can miss, get a fresh lease, and read the old row after the delete but before the update. Nothing invalidates that lease afterward, so the stale SET is accepted. The lease only catches a fill that a delete happened during."><fieldset><legend>With leases on, which writer order is safe?</legend><label><input type="radio" name="q-ps-b4-lease" value="0">Update the database, then delete the key</label><label><input type="radio" name="q-ps-b4-lease" value="1">Delete the key, then update the database</label><label><input type="radio" name="q-ps-b4-lease" value="2">Either; the lease covers both</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>A lease is a fencing token issued by the cache. It protects a fill only if something invalidates it after the database has changed. Find which writer step does that in each order.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<div class="table-wrap"><table><thead><tr><th>Leases</th><th>Order</th><th>TLC result</th></tr></thead><tbody>
+<tr><td>no</td><td>update, delete</td><td>Violated, 6-state trace</td></tr>
+<tr><td>no</td><td>delete, update</td><td>Violated, 6-state trace</td></tr>
+<tr><td>yes</td><td>update, delete</td><td>No error: 70 distinct states</td></tr>
+<tr><td>yes</td><td>delete, update</td><td>Violated, 6-state trace</td></tr>
+</tbody></table></div>
+<p><strong>1.</strong> <code>Miss</code>, <code>Read</code> (version 1), <code>Update</code> (the database is now 2), <code>Delete</code> (the cache was already empty), <code>Set</code>: the cache holds 1, the writer is idle, the database holds 2. The fill began before the write and landed after the invalidation, as in {{ref:cache}}. The stale value then stays until the TTL expires or the next write.</p>
+<p><strong>2.</strong> No error, 70 distinct states. In the same order of events, <code>Miss</code> takes token 1, <code>Delete</code> sets <code>lease</code> to 0, and the final <code>Set</code> presents token 1 and is refused: <code>lease # rtoken</code>. The diagram shows this. The reader gets nothing cached and misses again next time, which is safe.</p>
+<p><strong>3.</strong> Without leases: <code>Miss</code>, <code>Read</code> (1), <code>Delete</code>, <code>Set</code> (1), <code>Update</code> (2). The stale value lands between the two writer steps, and nothing deletes it afterward. With leases it still fails, with a different trace: <code>Delete</code>, <code>Miss</code> (a fresh token, issued after the delete), <code>Read</code> (1), <code>Set</code> (accepted), <code>Update</code>. The token is valid because the only invalidation came before it was issued. A lease rejects a fill that overlapped a later invalidation, so the invalidation must come after the change it announces. Delete-first fails for the same reason as splitting write and invalidation in {{ref:cache}}.</p>
+<p><strong>4.</strong> In cache-aside, the database update and the delete are two steps in two systems. Between them the cache necessarily holds the old value, so the strong property fails in every design, including the correct one. The contract you can deliver is "fresh once the invalidation has run", which is what <code>FreshAfterWrite</code> says. Choosing the property is part of the design: {{ref:cache}} made the write and invalidation atomic to get the strong version, and said so.</p>
+<p>Two readers would show the paper's second use of leases, rate-limiting how many clients may fill the same key at once. That is a performance property, not one this invariant can see.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-b4-replica">
+<p class="problem-meta"><span>Problem 3</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Databases</span></p>
+<h2>Read your own write from an asynchronous replica</h2>
+<p class="uses">Draws on {{ref:cache}}, {{ref:app-state}}, {{ref:replication}} and {{ref:fairness}}.</p>
+<p>A web app runs a Postgres primary with two asynchronous streaming replicas and sends reads to the replicas. A user saves their profile, the page reloads, and the old profile appears. The team's fix: after each commit, store the primary's WAL position from <code>pg_current_wal_lsn()</code> in the session. Then read only from a replica whose <code>pg_last_wal_replay_lsn()</code> is at least that value. A week later a new report: the profile flickers between two versions as the user clicks around.</p>
+<p>In the module LSNs are small integers. <code>OtherWrite</code> is another user's commit, and <code>Replay(r)</code> advances replica r by one record. The variables <code>last</code>, <code>need</code> and <code>before</code> record the most recent read, so both session guarantees become invariants. <code>Routing</code> is <code>"AnyReplica"</code> (the original app), <code>"WriteLsn"</code> (the fix: the token is the session's last write) or <code>"SessionLsn"</code> (the token also rises to whatever a read has returned).</p>
+<pre><code>---------------- MODULE PSb4_Replica ----------------
+EXTENDS Naturals
+CONSTANTS Replicas, MaxLsn, Routing
+ASSUME Routing \in {"AnyReplica", "WriteLsn", "SessionLsn"}
+VARIABLES primary,  \* the primary's current WAL position (LSN)
+          replay,   \* replay[r]: the LSN replica r has replayed
+          token,    \* the LSN the session carries in its cookie
+          wrote,    \* the LSN of the session's last write
+          seen,     \* the highest LSN the session has read so far
+          last,     \* the LSN the most recent read returned
+          need,     \* ... the value of wrote at that read
+          before    \* ... the value of seen just before that read
+vars == &lt;&lt;primary, replay, token, wrote, seen, last, need, before&gt;&gt;
+
+Max(a, b) == IF a &gt;= b THEN a ELSE b
+
+Init == /\ primary = 0
+        /\ replay = [r \in Replicas |-&gt; 0]
+        /\ token = 0 /\ wrote = 0 /\ seen = 0
+        /\ last = 0 /\ need = 0 /\ before = 0
+
+\* The session commits a write on the primary.
+MyWrite == /\ primary &lt; MaxLsn
+           /\ primary' = primary + 1
+           /\ wrote' = primary + 1
+           /\ token' = IF Routing = "AnyReplica" THEN token ELSE primary + 1
+           /\ UNCHANGED &lt;&lt;replay, seen, last, need, before&gt;&gt;
+\* Another session commits a write.
+OtherWrite == /\ primary &lt; MaxLsn
+              /\ primary' = primary + 1
+              /\ UNCHANGED &lt;&lt;replay, token, wrote, seen, last, need, before&gt;&gt;
+\* Asynchronous streaming: replica r replays one more WAL record.
+Replay(r) == /\ replay[r] &lt; primary
+             /\ replay' = [replay EXCEPT ![r] = @ + 1]
+             /\ UNCHANGED &lt;&lt;primary, token, wrote, seen, last, need, before&gt;&gt;
+\* The session reads from replica r. Except in AnyReplica, the router
+\* uses a replica only if it has replayed up to the session's token.
+Read(r) == /\ Routing # "AnyReplica" =&gt; replay[r] &gt;= token
+           /\ last' = replay[r]
+           /\ need' = wrote
+           /\ before' = seen
+           /\ seen' = Max(seen, replay[r])
+           /\ token' = IF Routing = "SessionLsn" THEN Max(token, replay[r])
+                       ELSE token
+           /\ UNCHANGED &lt;&lt;primary, replay, wrote&gt;&gt;
+
+Next == MyWrite \/ OtherWrite \/ \E r \in Replicas : Replay(r) \/ Read(r)
+Spec == Init /\ [][Next]_vars
+FairSpec == Spec /\ \A r \in Replicas : WF_vars(Replay(r))
+
+ReadYourWrites == last &gt;= need     \* the read saw the session's own write
+MonotonicReads == last &gt;= before   \* the read did not go back in time
+\* Some replica is (again and again) able to serve the session.
+Servable == []&lt;&gt;(\E r \in Replicas : replay[r] &gt;= token)
+=====================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Replicas = {r1, r2}
+          MaxLsn = 2
+          Routing = "WriteLsn"
+INVARIANT ReadYourWrites
+INVARIANT MonotonicReads
+CHECK_DEADLOCK FALSE</code></pre>
+<!--fig:lsn-->
+<ol class="tasks">
+<li>Run <code>"AnyReplica"</code>. Which property fails first, and how?</li>
+<li>Run <code>"WriteLsn"</code>. Explain the flicker from TLC's trace.</li>
+<li>Run <code>"SessionLsn"</code> and report the distinct states.</li>
+<li>With <code>"SessionLsn"</code>, a read waits until some replica has caught up to the token. Check <code>PROPERTY Servable</code> under <code>Spec</code> and under <code>FairSpec</code>. What does the fairness condition assume about replication, and what should the app do if that assumption fails?</li>
+</ol>
+<div class="numcheck" data-answer="5|five" data-explain="OtherWrite, Replay(r1), Read(r1) returning 1, Read(r2) returning 0: four steps after the initial state. The session never wrote, so its token stayed 0 and allowed both replicas." data-retry="Count the initial state. The violating read is the second one."><label>Number of states in TLC's trace for <code>"WriteLsn"</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="Under Spec, TLC's counterexample is MyWrite, OtherWrite, then stuttering: replication may simply never happen, so no replica ever reaches the token. Weak fairness of each Replay(r) makes the replicas catch up once writes stop."><fieldset><legend>Under plain <code>Spec</code>, why does <code>Servable</code> fail?</legend><label><input type="radio" name="q-ps-b4-replica" value="0">The token can exceed the primary's LSN</label><label><input type="radio" name="q-ps-b4-replica" value="1">Nothing forces a replica to replay, so it may stay behind forever</label><label><input type="radio" name="q-ps-b4-replica" value="2">Reads change the token</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Read-your-writes compares a read with the session's writes. Monotonic reads compares a read with the session's earlier reads. A token built from writes only knows about the first.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>1.</strong> <code>ReadYourWrites</code> fails in 3 states: <code>MyWrite</code> (primary at 1), <code>Read(r1)</code> while r1 has replayed nothing. That is the stale profile after saving.</p>
+<p><strong>2.</strong> <code>MonotonicReads</code> fails after 5 states: <code>OtherWrite</code> (someone else commits LSN 1), <code>Replay(r1)</code>, <code>Read(r1)</code> returns 1, <code>Read(r2)</code> returns 0. The session has not written, so its token is 0 and every replica qualifies. The page shows the newer profile and then the older one. The diagram draws the trace. Read-your-writes holds throughout; the token answers the wrong question.</p>
+<p><strong>3.</strong> No error, 157 distinct states. Raising the token to the highest LSN read means a later read goes only to a replica at least as fresh as anything already shown. It is the same rule as the fence in {{ref:fencing}}: accept only something not older than what you have already accepted. Here the session is the one keeping the fence.</p>
+<p><strong>4.</strong> Under <code>Spec</code>, <code>Servable</code> fails: <code>MyWrite</code>, <code>OtherWrite</code>, then stuttering, with no replica ever replaying. Under <code>FairSpec</code> it holds, again with 157 states. <code>WF_vars(Replay(r))</code> says a replica that is behind keeps replaying, so once writes stop it catches up. A replica that stops streaming, or lags for minutes during a long-running query, breaks that assumption. The fix belongs in the design: wait with a timeout, then read from the primary, which always satisfies the token. That keeps safety from depending on replication speed, and makes progress depend only on the primary being up.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-b4-toast">
+<p class="problem-meta"><span>Problem 4</span><span class="level" title="Difficulty 3 of 3">●●●</span><span class="domain">Design systems</span></p>
+<h2>An undo toast that tells the truth</h2>
+<p class="uses">Synthesis. Draws on {{ref:app-state}}, {{ref:capstone}}, {{ref:fencing}}, {{ref:messages}} and {{ref:fairness}}.</p>
+<p>An email client deletes optimistically. The message disappears at once and a design-system Toast offers "Undo" for a few seconds. The team has tried four designs. <code>"Deferred"</code> sends <code>DELETE</code> only when the toast's timer fires, and removes Undo at that moment. <code>"UndoWhileSending"</code> keeps Undo on screen until the server answers, because the button looked unresponsive otherwise. <code>"Immediate"</code> sends <code>DELETE</code> at once and makes Undo send a separate <code>RESTORE</code>. <code>"ImmediateSeq"</code> does the same, but the server skips a request whose sequence number is lower than one it already applied. A request can fail with no effect when <code>CanFail</code> is true. When the client's latest request fails, it rolls back its optimistic change and shows an error toast.</p>
+<p>Requests and responses travel in sets, so they can be reordered. The user deletes at most once and undoes at most once. <code>AgreeWhenQuiet</code> says that when nothing is in flight and no Undo is offered, the inbox shows the truth. <code>Converges</code> says the screen eventually agrees with the server for good.</p>
+<pre><code>---------------- MODULE PSb4_UndoToast ----------------
+EXTENDS Naturals
+CONSTANTS Design, CanFail
+ASSUME /\ Design \in {"Deferred", "UndoWhileSending", "Immediate", "ImmediateSeq"}
+       /\ CanFail \in BOOLEAN
+Immediate == Design \in {"Immediate", "ImmediateSeq"}
+VARIABLES server,   \* does the email exist on the server?
+          shown,    \* is it shown in the inbox list?
+          toast,    \* "none", "undo" or "error"
+          sent,     \* Deferred designs: has the timer sent the DELETE?
+          seq,      \* number of the client's latest request
+          net,      \* requests in flight: [seq, op]
+          resp,     \* responses in flight: [seq, op, ok]
+          applied,  \* ImmediateSeq: highest request seq the server applied
+          clicks    \* user actions so far (bounds the model)
+vars == &lt;&lt;server, shown, toast, sent, seq, net, resp, applied, clicks&gt;&gt;
+
+Init == /\ server = TRUE /\ shown = TRUE /\ toast = "none"
+        /\ sent = FALSE /\ seq = 0 /\ net = {} /\ resp = {}
+        /\ applied = 0 /\ clicks = 0
+
+Send(op) == /\ seq' = seq + 1
+            /\ net' = net \cup {[seq |-&gt; seq + 1, op |-&gt; op]}
+
+\* The user deletes the email: it disappears at once, with an Undo toast.
+Delete == /\ clicks = 0 /\ shown /\ toast = "none"
+          /\ shown' = FALSE /\ toast' = "undo" /\ clicks' = 1
+          /\ IF Immediate THEN Send("delete") ELSE UNCHANGED &lt;&lt;seq, net&gt;&gt;
+          /\ UNCHANGED &lt;&lt;server, sent, resp, applied&gt;&gt;
+
+\* The user clicks Undo.
+Undo == /\ clicks = 1 /\ toast = "undo"
+        /\ shown' = TRUE /\ toast' = "none" /\ clicks' = 2
+        /\ IF Immediate THEN Send("restore") ELSE UNCHANGED &lt;&lt;seq, net&gt;&gt;
+        /\ UNCHANGED &lt;&lt;server, sent, resp, applied&gt;&gt;
+
+\* The toast's timer fires. Deferred designs send the DELETE now;
+\* UndoWhileSending keeps showing Undo until the response arrives.
+Timeout == /\ toast = "undo" /\ ~sent
+           /\ IF Immediate
+                 THEN /\ toast' = "none"
+                      /\ UNCHANGED &lt;&lt;sent, seq, net&gt;&gt;
+                 ELSE /\ sent' = TRUE /\ Send("delete")
+                      /\ toast' = IF Design = "UndoWhileSending" THEN "undo"
+                                  ELSE "none"
+           /\ UNCHANGED &lt;&lt;server, shown, resp, applied, clicks&gt;&gt;
+
+\* The server handles a request: it succeeds or fails without effect.
+\* ImmediateSeq skips (but acknowledges) a request older than one applied.
+Serve(m) == /\ m \in net
+            /\ net' = net \ {m}
+            /\ \/ /\ IF Design = "ImmediateSeq" /\ m.seq &lt; applied
+                        THEN UNCHANGED &lt;&lt;server, applied&gt;&gt;
+                        ELSE /\ server' = (m.op = "restore")
+                             /\ applied' = m.seq
+                  /\ resp' = resp \cup {[seq |-&gt; m.seq, op |-&gt; m.op, ok |-&gt; TRUE]}
+               \/ /\ CanFail
+                  /\ UNCHANGED &lt;&lt;server, applied&gt;&gt;
+                  /\ resp' = resp \cup {[seq |-&gt; m.seq, op |-&gt; m.op, ok |-&gt; FALSE]}
+            /\ UNCHANGED &lt;&lt;shown, toast, sent, seq, clicks&gt;&gt;
+
+\* The client handles a response. A failure of its latest request rolls
+\* back the optimistic change and shows an error toast; others are ignored.
+Receive(m) == /\ m \in resp
+              /\ resp' = resp \ {m}
+              /\ IF ~m.ok /\ m.seq = seq
+                    THEN /\ shown' = (m.op = "delete")
+                         /\ toast' = "error"
+                    ELSE /\ UNCHANGED shown
+                         /\ toast' = IF toast = "undo" /\ sent THEN "none" ELSE toast
+              /\ UNCHANGED &lt;&lt;server, sent, seq, net, applied, clicks&gt;&gt;
+
+Dismiss == /\ toast = "error" /\ toast' = "none"
+           /\ UNCHANGED &lt;&lt;server, shown, sent, seq, net, resp, applied, clicks&gt;&gt;
+
+Msgs == [seq : 1..2, op : {"delete", "restore"}]
+Next == \/ Delete \/ Undo \/ Timeout \/ Dismiss
+        \/ \E m \in Msgs : Serve(m)
+        \/ \E m \in [seq : 1..2, op : {"delete", "restore"}, ok : BOOLEAN] : Receive(m)
+Spec == Init /\ [][Next]_vars
+FairSpec == /\ Spec
+            /\ WF_vars(Timeout) /\ WF_vars(Dismiss)
+            /\ \A m \in Msgs : WF_vars(Serve(m))
+            /\ \A m \in [seq : 1..2, op : {"delete", "restore"}, ok : BOOLEAN] :
+                   WF_vars(Receive(m))
+
+Quiet == net = {} /\ resp = {} /\ toast # "undo"
+AgreeWhenQuiet == Quiet =&gt; shown = server
+Converges == &lt;&gt;[](shown = server)
+=======================================================</code></pre>
+<pre><code>SPECIFICATION FairSpec
+CONSTANTS Design = "Deferred"
+          CanFail = TRUE
+INVARIANT AgreeWhenQuiet
+PROPERTY Converges
+CHECK_DEADLOCK FALSE</code></pre>
+<!--fig:toast-->
+<ol class="tasks">
+<li>Run <code>"Deferred"</code> with <code>CanFail = TRUE</code>. Report the distinct states, and find each of them in the diagram.</li>
+<li>Run <code>"UndoWhileSending"</code>. Tell the user's story from TLC's trace. What does the user see at the end, and what is true on the server?</li>
+<li>Run <code>"Immediate"</code> with <code>CanFail = FALSE</code>, then with <code>TRUE</code>. Explain both traces.</li>
+<li>Run <code>"ImmediateSeq"</code> with both values of <code>CanFail</code>. Which bug did the sequence numbers fix, and what is wrong with the client's rollback rule? Propose a fix and say what you would have to model to check it.</li>
+<li><code>FairSpec</code> includes <code>WF_vars(Timeout)</code>. What real assumption is that? What happens to a deleted message in <code>"Deferred"</code> if the user closes the tab while the toast is showing, and is that acceptable?</li>
+</ol>
+<div class="numcheck" data-answer="9|nine" data-explain="TLC finds 9 distinct states and no error: the diagram shows all nine, with three final states where the screen and the server agree." data-retry="Use Design = &quot;Deferred&quot; and CanFail = TRUE, with both the invariant and the property."><label>Distinct states for <code>"Deferred"</code> with failures <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="2" data-explain="In Deferred the client sends at most one request, after Undo is no longer possible, so there is nothing to reorder and the failure response describes the only operation. Immediate sends two requests that can cross."><fieldset><legend>Why does <code>"Deferred"</code> need no sequence numbers?</legend><label><input type="radio" name="q-ps-b4-toast" value="0">Its server never fails</label><label><input type="radio" name="q-ps-b4-toast" value="1">Its timer is fair</label><label><input type="radio" name="q-ps-b4-toast" value="2">It sends at most one request, after Undo is gone</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>For each design, ask two questions from earlier lessons. Can a request that the user has already cancelled in the UI still change the server? That is a stale write, as in {{ref:fencing}}. Does a rollback assume something about the server that the client does not actually know?</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<div class="table-wrap"><table><thead><tr><th>Design</th><th><code>CanFail = FALSE</code></th><th><code>CanFail = TRUE</code></th></tr></thead><tbody>
+<tr><td><code>"Deferred"</code></td><td>No error, 6 distinct states</td><td>No error, 9 distinct states</td></tr>
+<tr><td><code>"UndoWhileSending"</code></td><td><code>AgreeWhenQuiet</code> violated, 6-state trace</td><td>Same trace</td></tr>
+<tr><td><code>"Immediate"</code></td><td><code>AgreeWhenQuiet</code> violated, 7-state trace (reordering)</td><td>Violated, 7-state trace (two failures)</td></tr>
+<tr><td><code>"ImmediateSeq"</code></td><td>No error, 16 distinct states</td><td>Violated, 7-state trace (two failures)</td></tr>
+</tbody></table></div>
+<p><strong>1.</strong> No error, 9 distinct states, and <code>Converges</code> holds. The diagram is TLC's whole state graph. It has three final states, each agreeing with the server: undone before sending, deleted, and kept after a failure with an error the user dismissed.</p>
+<p><strong>2.</strong> <code>Delete</code>, <code>Timeout</code> (DELETE sent, Undo still shown), <code>Undo</code> (the message reappears), <code>Serve</code> (the server deletes it), <code>Receive</code> (success, nothing to do). The user sees the message in the inbox, and it no longer exists. They will find out when they try to open it. Undo was offered after the decision had left the client, which is the stale-authority shape of {{ref:fencing}}: the UI granted a choice it could no longer enforce. Removing Undo when the request is sent is exactly <code>"Deferred"</code>.</p>
+<p><strong>3.</strong> Without failures: <code>Delete</code> (DELETE 1 sent), <code>Undo</code> (RESTORE 2 sent), the server handles RESTORE 2 first, then DELETE 1, and both succeed. The message is shown and deleted. This is the reordering of {{ref:messages}}. With failures TLC reports a different 7-state trace: both requests fail, so the server still has the message, and the client handles failure 2 last. Rolling back a failed RESTORE means hiding the message. It guessed that the DELETE had succeeded.</p>
+<p><strong>4.</strong> With <code>CanFail = FALSE</code>, <code>"ImmediateSeq"</code> passes with 16 states. The server ignores DELETE 1 after applying RESTORE 2, which is a fence on request numbers. With failures it fails on the same double-failure trace as <code>"Immediate"</code>, because the fence cannot fix the client's rollback rule. A rollback encodes an assumption about server state that the client never observed. One fix is to answer a failure with the resource's current state, or to refetch it, and render that instead of guessing. To check it you would model the refetch as another request whose response can be stale too. Then you would need the request-ID rule of {{ref:app-state}} on the client as well as the sequence fence on the server. That is a layered contract, in the sense of {{ref:capstone}}.</p>
+<p><strong>5.</strong> It assumes the client survives until the timer fires. If the tab closes during the toast, <code>Timeout</code> never happens, the DELETE is never sent, and the message is still in the inbox next time. In the model, that is a behavior allowed by <code>Spec</code> but excluded by <code>FairSpec</code>. Whether it is acceptable is a product decision. "Close the tab to undo" is often fine for email, but not for a payment. If it is not acceptable, send the request immediately and accept the problems of tasks 3 and 4, or have the server run the delay. Fairness should be a property the product actually has, not a convenience that makes TLC pass.</p>
+</details>
+</article>

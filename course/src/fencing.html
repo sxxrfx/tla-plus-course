@@ -1,0 +1,119 @@
+<h1>A former owner can still send a write.</h1>
+<p class="lead">A lease says who should own a resource. Only the resource can stop a former owner’s write from landing.</p>
+<p>This builds on {{lesson:mutex}}, where one holder at a time was a property you could check, and on {{lesson:messages}}, where messages could be delayed arbitrarily. Put those together and “one holder” is no longer enough: a former holder can have work still on its way.</p>
+<p>A <em>lease</em> grants authority for an interval under assumptions about time. It does not erase a worker’s memory or retract its messages. If A pauses, the coordinator may grant the resource to B, and A may later resume believing it still owns the resource. Follow the red arrow.</p>
+<!--fig:bad-->
+<p>A <em>fencing token</em> is an ordered number issued with each grant. The resource remembers the last token it accepted and refuses lower ones. Here is the same order of events with that rule.</p>
+<!--fig:good-->
+<p>The difference between the two charts is one comparison in the last two rows. Notice where it lives. The coordinator’s lease table cannot reject a write already in flight; only the resource sees that write.</p>
+<h2>The model</h2>
+<p>In this module a token stands for its holder. <code>AcceptWrite(t)</code> can run for any token ever granted, because to the resource a paused holder and a delayed message look identical. Tokens come from a single counter, so two holders cannot share one and nobody can invent a larger one. Those are requirements on the real issuing authority.</p>
+<pre><code>---------------- MODULE Fencing ----------------
+EXTENDS Naturals
+CONSTANTS MaxToken, Fenced
+ASSUME Fenced \in BOOLEAN
+VARIABLES issued,        \* highest token the authority has granted
+          fence,         \* token of the last write the resource accepted
+          staleAccepted  \* history: did it accept a superseded token?
+vars == &lt;&lt;issued, fence, staleAccepted&gt;&gt;
+
+Init == /\ issued = 0
+        /\ fence = 0
+        /\ staleAccepted = FALSE
+
+Grant == /\ issued &lt; MaxToken
+         /\ issued' = issued + 1
+         /\ UNCHANGED &lt;&lt;fence, staleAccepted&gt;&gt;
+
+\* Any token ever granted can still try to write: its holder may have
+\* paused, or its message may have been delayed.
+AcceptWrite(t) ==
+    /\ t \in 1..issued
+    /\ Fenced =&gt; t &gt;= fence
+    /\ fence' = t
+    /\ staleAccepted' = (staleAccepted \/ t &lt; issued)
+    /\ UNCHANGED issued
+
+Next == Grant \/ \E t \in 1..MaxToken: AcceptWrite(t)
+Spec == Init /\ [][Next]_vars
+
+TypeOK == /\ issued \in 0..MaxToken
+          /\ fence \in 0..MaxToken
+          /\ staleAccepted \in BOOLEAN
+FenceNeverRegresses == [][fence' &gt;= fence]_fence
+RevokedAtGrant == ~staleAccepted
+================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS MaxToken = 3
+          Fenced = TRUE
+INVARIANT TypeOK
+PROPERTY FenceNeverRegresses
+CHECK_DEADLOCK FALSE</code></pre>
+<p><code>FenceNeverRegresses</code> is an action property, not an invariant, because “did not go down” compares two states. A state predicate such as <code>fence &gt;= 0</code> would pass in every design and prove nothing. With <code>Fenced = TRUE</code>, TLC finds no error: 15 distinct states, 34 generated. With <code>Fenced = FALSE</code> the property fails on the trace in the first chart: Grant, Grant, <code>AcceptWrite(2)</code>, <code>AcceptWrite(1)</code>.</p>
+<h2>What fencing does not promise</h2>
+<details class="answer"><summary>Predict: B holds token 2, but its write has not reached storage. Can storage still accept A’s token 1?</summary><p>Yes. Add <code>INVARIANT RevokedAtGrant</code> with <code>Fenced = TRUE</code> and TLC reports a violation: Grant, Grant, <code>AcceptWrite(1)</code>. Storage has never seen token 2.</p></details>
+<!--fig:gap-->
+<p>So state the requirement precisely. Rejecting tokens below the highest <em>accepted</em> token is weaker than revoking A at the instant a new lease is <em>issued</em>. The stronger meaning needs another mechanism, such as installing the new epoch at the resource as part of the grant, or stronger timing assumptions.</p>
+<div class="quiz" data-answer="0" data-explain="The resource compares against tokens it has accepted. Until token 2 is used or installed, token 1 is not below the fence."><fieldset><legend>What does the fence rule in this module guarantee?</legend><label><input type="radio" name="q-fencing" value="0">Accepted tokens never go down</label><label><input type="radio" name="q-fencing" value="1">An old holder stops writing as soon as a new lease is granted</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>Introduce time explicitly</h2>
+<p>Notice that the module has no clock. Fencing does not need one, because tokens are logical epochs. A lease model does. Untimed TLA+ does not secretly advance a clock, so add a variable such as <code>now</code>, a <code>Tick</code> action, expiration fields, and guards. Decide whether clocks are shared or local, how drift is bounded, whether processes can pause, and whether time must keep advancing. If <code>now</code> may stop forever, an eventual-expiration property can fail.</p>
+<p>For a finite experiment, bound time or use a justified abstraction of “before expiry” and “after expiry.” Avoid wrapping timestamps modulo a small bound when ordering matters: the wrap can invent or hide stale-token bugs.</p>
+<h2>Worked example: a mobile session after logout</h2>
+<p>A mobile app starts uploading a profile change under session epoch 12. The user logs out, and the server revokes that session by advancing its epoch to 13. The old upload reaches the server afterward. Deleting the token from the phone does not recall the request.</p>
+<!--fig:sess-->
+<p>Here the server’s test is equality with the current epoch, not “at least the last accepted,” because the server itself performs the revocation. That closes the gap from the previous section. The module has one request and one revocation, so you can see every step. <code>Split</code> chooses whether the comparison and the write are one step or two.</p>
+<pre><code>---------------- MODULE Session ----------------
+CONSTANT Split
+ASSUME Split \in BOOLEAN
+VARIABLES sessionEpoch, profile, pc,
+          acceptedEpoch, epochAtAcceptance
+vars == &lt;&lt;sessionEpoch, profile, pc, acceptedEpoch, epochAtAcceptance&gt;&gt;
+
+Req == [epoch |-&gt; 12, value |-&gt; "new"]   \* the delayed upload
+
+Init == /\ sessionEpoch = 12
+        /\ profile = "old"
+        /\ pc = "sent"
+        /\ acceptedEpoch = 0
+        /\ epochAtAcceptance = 0
+
+Revoke == /\ sessionEpoch = 12
+          /\ sessionEpoch' = 13
+          /\ UNCHANGED &lt;&lt;profile, pc, acceptedEpoch, epochAtAcceptance&gt;&gt;
+
+Install == /\ profile' = Req.value
+           /\ acceptedEpoch' = Req.epoch
+           /\ epochAtAcceptance' = sessionEpoch
+           /\ pc' = "done"
+           /\ UNCHANGED sessionEpoch
+
+\* One step: compare and write inside the same boundary.
+Accept == /\ ~Split /\ pc = "sent"
+          /\ IF Req.epoch = sessionEpoch
+             THEN Install
+             ELSE /\ pc' = "rejected"
+                  /\ UNCHANGED &lt;&lt;sessionEpoch, profile,
+                                 acceptedEpoch, epochAtAcceptance&gt;&gt;
+
+\* Two steps: the check's result can outlive the authority it saw.
+Check == /\ Split /\ pc = "sent"
+         /\ pc' = IF Req.epoch = sessionEpoch THEN "checked" ELSE "rejected"
+         /\ UNCHANGED &lt;&lt;sessionEpoch, profile,
+                        acceptedEpoch, epochAtAcceptance&gt;&gt;
+Write == /\ pc = "checked" /\ Install
+
+Next == Revoke \/ Accept \/ Check \/ Write
+Spec == Init /\ [][Next]_vars
+AcceptedWithCurrentAuthority == acceptedEpoch = epochAtAcceptance
+================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANT Split = FALSE
+INVARIANT AcceptedWithCurrentAuthority
+CHECK_DEADLOCK FALSE</code></pre>
+<p>The two recorded epochs describe the <em>last acceptance event</em>. Do not instead require every past request’s epoch to equal today’s <code>sessionEpoch</code>: a legitimate past write does not become invalid when the user later logs out.</p>
+<p>With <code>Split = FALSE</code>, TLC finds no error: 5 distinct states, 5 generated. With <code>Split = TRUE</code>, it fails.</p>
+<!--fig:split-->
+<p>Read the grid from the left. The check was correct when performed, and its result outlived the authority it represented. This is the stale-check structure of {{lesson:inventory}}, applied to authorization. A fix must make the acceptance boundary enforce current authority, or deliberately document weaker revocation.</p>
+<p>In a real app, include the user, tenant, and session in the credential’s scope. An epoch comparison does not authenticate a request or prevent cross-account access. Likewise, if a cached token validation stays valid for five minutes, immediate revocation is not your contract, and the model’s time and cache assumptions must say so.</p>
+<details class="answer"><summary>Transfer exercise: where should a background photo upload be rejected after workspace switching?</summary><p>First ask whether it is still authorized for the original workspace. Switching the visible UI is not necessarily revocation. If the product promises cancellation, model an upload or session generation checked by the receiving service at acceptance. Always preserve the original workspace identity in the request, rather than interpreting it using whichever workspace is currently selected.</p></details>
+<p class="resources"><a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/tla/book.html">Specifying Systems</a>, chapter 9, develops explicit real-time specifications. Compare your lease model with an untimed fencing model before combining them.</p>

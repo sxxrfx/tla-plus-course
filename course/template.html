@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="An offline, interactive TLA+ course: state machines, language, model checking, proofs, and distributed architecture studies.">
+<title>TLA+ — an interactive course</title>
+<style>
+:root{color-scheme:light;--background:#f7f9fd;--foreground:#1d2943;--card:#fff;--secondary:#eaf0fa;--muted:#53617a;--border:#ced8e8;--primary:#354ba8;--primary-foreground:#fff;--accent:#e5ebff;--success:#24654a;--destructive:#a62e48;--warning:#80560a;--code-background:#edf1f8;--ring:#6075d1;--chart-1:#4056b5;--chart-2:#26816a;--chart-3:#b14868;--radius:10px;--font-sans:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--font-mono:ui-monospace,SFMono-Regular,Consolas,monospace}
+:root[data-theme=dark]{color-scheme:dark;--background:#172033;--foreground:#e3e9f7;--card:#202c43;--secondary:#283650;--muted:#b3bfd5;--border:#40516c;--primary:#a8baff;--primary-foreground:#172033;--accent:#2c3e64;--success:#87d8af;--destructive:#ff9ab0;--warning:#eec67f;--code-background:#111c30;--ring:#a8baff;--chart-1:#a8baff;--chart-2:#87d8af;--chart-3:#ff9ab0}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--foreground);background:transparent;font:16px/1.65 var(--font-sans)}button,input,select,textarea{font:inherit}a{color:var(--primary);text-underline-offset:3px}button{cursor:pointer}button,select,input[type=search],input[type=number]{border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--foreground);background:var(--card)}button:hover{background:var(--accent)}button:disabled{opacity:.5;cursor:default}button.primary{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary)}:focus-visible{outline:3px solid var(--ring);outline-offset:3px}.skip{position:absolute;left:12px;top:-90px;z-index:10;background:var(--card);padding:12px}.skip:focus{top:12px}.top{display:flex;gap:16px;justify-content:space-between;align-items:center;flex-wrap:wrap;padding:16px 24px;border-bottom:1px solid var(--border)}.brand{font-weight:650;color:var(--foreground);text-decoration:none}.top-actions .save-state{font-size:12px;color:var(--muted);max-width:220px}.top-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.top progress{width:85px;height:7px;accent-color:var(--primary)}.shell{max-width:1260px;margin:auto;display:grid;grid-template-columns:265px minmax(0,1fr)}.sidebar{border-right:1px solid var(--border);padding:18px 14px;align-self:start;position:sticky;top:12px;height:var(--sidebar-height,680px);min-height:0;overflow:hidden}.sidebar summary{font-weight:650}.sidebar input{margin:6px 0 0;width:100%}.toc{list-style:none;padding:0;margin:0}.toc a{display:flex;align-items:baseline;gap:9px;padding:7px 8px;border-radius:5px;text-decoration:none;color:var(--muted);font-size:14px}.toc a[aria-current=page]{color:var(--primary);background:var(--accent)}.toc .num{min-width:22px;font-variant-numeric:tabular-nums}.toc .done{margin-left:auto;color:var(--success)}.group{font-size:13px;font-weight:650;margin:20px 8px 5px;color:var(--foreground)}main{min-width:0;padding:40px 44px 64px;background:var(--background)}.lesson{max-width:800px;margin:auto}.lesson h1{font:normal clamp(30px,4vw,43px)/1.18 Georgia,"Times New Roman",serif;letter-spacing:-.6px;margin:8px 0 20px}.lesson h2{font-size:22px;line-height:1.3;margin:36px 0 12px}.lesson h3{font-size:17px;line-height:1.4;margin:24px 0 8px}.lesson p{margin:12px 0}.lesson ul,.lesson ol{padding-left:24px}.lesson li{margin:7px 0}.chapter{font-size:13px;color:var(--muted)}.lead{font-size:19px;line-height:1.55}.goal{border-left:3px solid var(--primary);padding-left:16px;margin:24px 0}.callout{padding:14px 18px;background:var(--secondary);border-radius:var(--radius);margin:22px 0}.callout p:first-child{margin-top:0}.callout p:last-child{margin-bottom:0}code{font:14px/1.65 var(--font-mono);overflow-wrap:anywhere;background:var(--code-background);padding:1px 4px;border-radius:3px}pre{background:var(--code-background);padding:20px 18px;overflow-x:auto;border-radius:var(--radius);margin:16px 0;max-width:100%;tab-size:4}pre code{padding:0;overflow-wrap:normal;white-space:pre;font-size:13px}.code-tools{display:flex;justify-content:flex-end;margin-top:-10px}.code-tools button{font-size:13px;padding:4px 10px}figure{margin:24px 0}figcaption{font-size:14px;color:var(--muted);margin-top:10px}.flow{display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;margin:20px 0}.node{max-width:100%;overflow-wrap:anywhere;background:var(--secondary);padding:14px 18px;min-width:90px;text-align:center;border-radius:6px}.node small{display:block;color:var(--muted)}.arrow{color:var(--muted);font-size:22px}.branch{display:grid;gap:12px}.diagram-label{text-align:center;color:var(--muted);font-size:14px}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;margin:18px 0;font-size:14px}th,td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--border)}th{font-weight:650}details.answer{margin:16px 0;padding:12px 16px;background:var(--secondary);border-radius:6px}summary{cursor:pointer}.lab{border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin:24px 0;background:var(--card)}.lab h2{font-size:18px;margin-top:0}.controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0}.controls label{min-width:0;max-width:100%;display:flex;align-items:center;gap:7px;flex-wrap:wrap}.controls input[type=number]{width:75px}.controls select{min-width:0;max-width:100%}.readout{font-family:var(--font-mono);font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--code-background);padding:14px;border-radius:6px;margin:16px 0}.good{color:var(--success)}.bad{color:var(--destructive)}.status{min-height:28px;font-size:14px}.lab svg{display:block;width:100%;height:auto;min-height:90px}.lab svg text{fill:var(--foreground);font:14px var(--font-sans)}.lab svg .edge{stroke:var(--border);stroke-width:2}.lab svg .vertex{fill:var(--secondary);stroke:var(--border)}.lab svg .current{fill:var(--accent);stroke:var(--primary);stroke-width:2}.lab svg .failure{fill:var(--secondary);stroke:var(--destructive);stroke-width:3}.quiz{border-top:1px solid var(--border);margin:30px 0 20px;padding-top:20px}.quiz fieldset{border:0;margin:0;padding:0}.quiz legend{font-weight:650;margin-bottom:10px}.quiz label{display:block;padding:8px 10px;border-radius:5px}.quiz label:hover{background:var(--secondary)}.quiz input{margin-right:9px}.quiz button{margin-top:10px}.quiz-feedback{margin:10px 0;min-height:24px}.notes label{display:block;font-weight:650}.notes textarea{width:100%;min-height:95px;padding:12px;margin:8px 0;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--foreground)}.notes small{color:var(--muted)}.lesson-footer{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;border-top:1px solid var(--border);margin-top:30px;padding-top:20px}.lesson-footer label{display:flex;gap:8px;align-items:center}.pager{display:flex;gap:10px}.resources{font-size:14px}.resources li{margin:8px 0}.lane{display:grid;grid-template-columns:90px 1fr;gap:10px;margin:10px 0;align-items:center}.lane .track{display:flex;gap:7px;flex-wrap:wrap}.chip{max-width:100%;overflow-wrap:anywhere;line-height:1.5;padding:5px 10px;background:var(--secondary);border-radius:4px;font:13px var(--font-mono)}.flash{min-height:160px;display:grid;place-content:center;text-align:center;padding:20px;background:var(--secondary);border-radius:var(--radius)}.flash strong{font-size:20px}.flash p{margin-bottom:0}.js .lesson[hidden]{display:none}[hidden]{display:none!important}.only-print{display:none}.muted{color:var(--muted)}#search-status{font-size:13px;color:var(--muted)}@media(min-width:1250px){main{padding-left:64px;padding-right:64px}}@media(max-width:850px){.shell{grid-template-columns:220px minmax(0,1fr)}main{padding:30px 24px}.sidebar{padding:20px 12px}.top{padding:14px 18px}}@media(max-width:650px){.shell{display:block}.sidebar{position:static;height:auto;max-height:none;border-right:0;border-bottom:1px solid var(--border);padding:12px 16px}.sidebar details:not([open]) input{display:none}main{padding:24px 18px 44px}.top{padding:14px 16px}.top-actions{gap:8px}.top progress{display:none}.lab{padding:15px}.lane{grid-template-columns:1fr;gap:3px}.lesson h1{font-size:32px}pre{padding:15px 12px}.top-actions button{font-size:14px;padding:6px 9px}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}@media print{.top,.sidebar,.lesson-footer,.code-tools,.notes,.controls,.quiz button{display:none!important}.shell{display:block}main{padding:0;background:transparent}.lesson,.js .lesson[hidden]{display:block!important;max-width:none;break-before:page}.lesson:first-child{break-before:auto}details.answer>*{display:block}.only-print{display:block}.lab{break-inside:avoid}pre{white-space:pre-wrap;overflow:visible}pre code{white-space:pre-wrap}body{font-size:11pt;color:#000}a{color:inherit}h1,h2,h3{break-after:avoid}}
+
+/* Keep controls outside the scrollable lesson region. */
+.sidebar details{height:100%}
+.sidebar summary{line-height:26px}
+.sidebar:has(details:not([open])){height:auto}
+.contents-body{height:var(--contents-height,610px);min-height:0;display:flex;flex-direction:column;margin-top:8px}
+.contents-search{flex:none;padding:8px 0 14px}
+.contents-search label{display:block;font-size:14px}
+.contents-search #search-status{margin:8px 0 0}
+.lesson-scroll{flex:1;min-height:0;overflow-y:scroll;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:auto;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.lesson-scroll::-webkit-scrollbar{width:10px;-webkit-appearance:none}
+.lesson-scroll::-webkit-scrollbar-track{background:var(--secondary);border-radius:8px}
+.lesson-scroll::-webkit-scrollbar-thumb{background:var(--muted);border:2px solid var(--secondary);border-radius:8px}
+@supports not selector(::-webkit-scrollbar){.lesson-scroll{scrollbar-color:var(--muted) var(--secondary)}}
+.lesson-scroll:focus-visible{outline-offset:2px}
+.lesson-scroll .toc{padding:0 5px 8px 0}
+.contents-footer{flex:none;display:flex;gap:8px;justify-content:space-between;align-items:center;padding-top:10px;font-size:12px;font-variant-numeric:tabular-nums}
+.contents-paging{display:flex;gap:6px}
+.contents-paging button{width:34px;min-height:34px;padding:3px;font-size:18px;line-height:1}
+.contents-paging button:disabled{opacity:.35}
+.sidebar details:not([open]) .contents-body{display:none}
+.videos{margin:20px 0;padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card)}.videos h2{margin:0 0 2px;font-size:18px}.videos-note{margin:0 0 10px;font-size:13px;color:var(--muted)}.video{padding:10px 0;border-top:1px solid var(--border)}.video-play{display:flex;gap:12px;align-items:center;width:100%;text-align:left;padding:10px 12px}.video-icon{flex:none;display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:var(--primary);color:var(--primary-foreground);font-size:13px}.video-name{display:block;font-weight:650;line-height:1.35}.video-meta{display:block;font-size:13px;color:var(--muted)}.video-about{margin:8px 0 4px;font-size:14px}.video-links{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;font-size:13px}.video-frame{aspect-ratio:16/9;margin-bottom:8px;border-radius:6px;overflow:hidden;background:#000}.video-frame iframe{display:block;width:100%;height:100%;border:0}.video-close{padding:3px 10px;font-size:13px}@media print{.videos{display:none!important}}
+@media(max-width:650px){
+ .sidebar details{height:auto}
+ .contents-body{height:min(500px,var(--contents-height,500px))}
+ .contents-paging button{width:44px;min-height:44px}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to lesson</a>
+<header class="top"><a class="brand" href="#orientation">TLA+ course</a><div class="top-actions"><span id="progress-text">0 / 28 studied</span><progress id="course-progress" max="28" value="0" aria-label="Lessons studied"></progress><button id="save-progress" type="button">Save progress</button><span id="progress-save-status" class="save-state" role="status" aria-live="polite">Saved in this browser.</span><button id="theme" type="button">Dark mode</button><button id="print" type="button">Print course</button></div></header>
+<div class="shell">
+<aside class="sidebar">
+<details id="contents" open>
+<summary>Course contents</summary>
+<div class="contents-body">
+<div class="contents-search">
+<label for="search" class="muted">Find a lesson</label>
+<input id="search" type="search" autocomplete="off">
+<p id="search-status" aria-live="polite" hidden></p>
+</div>
+<nav id="lesson-scroll" class="lesson-scroll" aria-label="Lessons" tabindex="0">
+<ol class="toc" id="toc"></ol>
+</nav>
+<div class="contents-footer">
+<span id="lesson-range">28 lessons</span>
+<div class="contents-paging">
+<button id="lessons-up" type="button" aria-label="Scroll lessons up" title="Scroll lessons up">↑</button>
+<button id="lessons-down" type="button" aria-label="Scroll lessons down" title="Scroll lessons down">↓</button>
+</div>
+</div>
+</div>
+</details>
+</aside>
+<main id="content" tabindex="-1">
+<noscript><p class="callout">JavaScript is disabled. All lessons remain readable; enable JavaScript for simulations, quizzes, and progress.</p></noscript>
+<section class="lesson" id="orientation"><!-- build.py replaces this with every lesson in curriculum.py --></section>
+</main></div>
+<footer class="only-print">TLA+ interactive course. External links and videos require internet. Embedded labs are educational JavaScript models, not TLC.</footer>
+<script>
+(()=>{
+'use strict';
+document.documentElement.classList.add('js');
+const lessons=[...document.querySelectorAll('.lesson')];
+const key='tla-course-v1';
+let state={done:{},notes:{},answers:{},reading:{},current:'orientation',theme:'light',updatedAt:0};
+let storage=true;
+let uninstalling=false;
+let diskStatus=window.__courseSavePath?'saving':'browser';
+let saveTimer;
+let pendingDiskSnapshot=null;
+let diskWritePromise=null;
+let shownLesson=null;
+let restoringScroll=false;
+let readingTimer;
+function restoreState(raw){
+ if(!raw||typeof raw!=='object'||Array.isArray(raw))return;
+ for(const field of ['done','notes','answers','reading']){
+  if(!raw[field]||typeof raw[field]!=='object'||Array.isArray(raw[field]))continue;
+  const entries=Object.entries(raw[field]).filter(([id,value])=>field==='done'?typeof value==='boolean':field==='reading'?typeof value==='number'&&Number.isFinite(value)&&value>=0&&value<=1:typeof value==='string');
+  state[field]=Object.fromEntries(entries);
+ }
+ if(lessons.some(l=>l.id===raw.current))state.current=raw.current;
+ if(['light','dark'].includes(raw.theme))state.theme=raw.theme;
+ if(typeof raw.updatedAt==='number'&&Number.isFinite(raw.updatedAt))state.updatedAt=raw.updatedAt;
+}
+let localSnapshot=null;
+try{localSnapshot=JSON.parse(localStorage.getItem(key)||'null');}catch{storage=false;}
+const appSnapshot=window.__courseProgress;
+restoreState(appSnapshot&&(!localSnapshot||(appSnapshot.updatedAt||0)>=(localSnapshot.updatedAt||0))?appSnapshot:localSnapshot);
+function showSaveStatus(){
+ if(uninstalling)return;
+ let message=diskStatus==='saved'?'Saved to this Mac.':diskStatus==='saving'?'Saving…':diskStatus==='error'?'App save failed. Use Save progress to retry.':storage?'Saved in this browser.':'Browser storage is unavailable. Keep this tab open.';
+ document.querySelectorAll('.save-state').forEach(el=>{el.textContent=message;el.classList.toggle('bad',diskStatus==='error');});
+}
+function flushProgress(){
+ if(uninstalling)return Promise.resolve(false);
+ clearTimeout(saveTimer);
+ if(!window.__courseSavePath)return Promise.resolve(storage);
+ pendingDiskSnapshot=JSON.stringify(state);
+ if(diskWritePromise)return diskWritePromise;
+ diskStatus='saving';showSaveStatus();
+ diskWritePromise=(async()=>{
+  try{
+   while(pendingDiskSnapshot){
+    const snapshot=pendingDiskSnapshot;pendingDiskSnapshot=null;
+    const response=await fetch(window.__courseSavePath,{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot});
+    if(!response.ok)throw Error('Save failed');
+    const result=await response.json();
+    if(!result.saved)throw Error('Save was not acknowledged');
+   }
+   diskStatus='saved';return true;
+  }catch{diskStatus='error';return false;}
+  finally{diskWritePromise=null;showSaveStatus();}
+ })();
+ return diskWritePromise;
+}
+function save(){
+ if(uninstalling)return;
+ state.updatedAt=Math.max(Date.now(),state.updatedAt+1);
+ const snapshot=JSON.stringify(state);
+ try{localStorage.setItem(key,snapshot);storage=true;}catch{storage=false;}
+ if(window.__courseSavePath){
+  pendingDiskSnapshot=snapshot;diskStatus='saving';clearTimeout(saveTimer);saveTimer=setTimeout(flushProgress,250);
+ }
+ showSaveStatus();
+}
+function captureReading(){
+ if(uninstalling)return;
+ if(!shownLesson||restoringScroll)return;
+ const extent=Math.max(0,document.documentElement.scrollHeight-window.innerHeight);
+ state.reading[shownLesson]=extent?Math.max(0,Math.min(1,window.scrollY/extent)):0;
+}
+function saveBeforeLeaving(){
+ if(uninstalling)return;
+ captureReading();save();
+ if(window.__courseSavePath){
+  const snapshot=JSON.stringify(state);
+  const blob=new Blob([snapshot],{type:'application/json'});
+  if(blob.size<60000)navigator.sendBeacon(window.__courseSavePath,blob);
+  else flushProgress();
+ }
+}
+document.getElementById('save-progress').addEventListener('click',()=>{captureReading();save();flushProgress();});
+window.addEventListener('storage',event=>{
+ if(event.key!==key||!event.newValue)return;
+ try{
+  const incoming=JSON.parse(event.newValue);
+  if(!incoming||typeof incoming.updatedAt!=='number'||incoming.updatedAt<=state.updatedAt)return;
+  const current=state.current;restoreState(incoming);state.current=current;
+  lessons.forEach(lesson=>{
+   const check=lesson.querySelector('.lesson-footer input[type="checkbox"]');
+   if(check)check.checked=!!state.done[lesson.id];
+   const mark=toc.querySelector('a[href="#'+lesson.id+'"] .done');if(mark)mark.hidden=!state.done[lesson.id];
+   const notes=lesson.querySelector('.notes textarea');
+   if(notes&&document.activeElement!==notes)notes.value=state.notes[lesson.id]||'';
+  });
+  updateProgress();
+ }catch{}
+});
+window.addEventListener('course-uninstall',()=>{
+ stopVideo();uninstalling=true;clearTimeout(saveTimer);clearTimeout(readingTimer);pendingDiskSnapshot=null;
+ try{localStorage.removeItem(key);}catch{}
+ window.__courseSavePath=undefined;
+ document.querySelector('.top').hidden=true;document.querySelector('.shell').hidden=true;
+ const message=document.createElement('p');message.className='callout';message.setAttribute('role','status');message.textContent='TLA+ Course was uninstalled.';document.body.append(message);
+});
+window.addEventListener('pagehide',saveBeforeLeaving);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){captureReading();save();flushProgress();}});
+window.addEventListener('scroll',()=>{if(!restoringScroll){captureReading();clearTimeout(readingTimer);readingTimer=setTimeout(save,400);}},{passive:true});
+document.addEventListener('click',event=>{const link=event.target.closest('a[href^="#"]');if(link&&lessons.some(l=>'#'+l.id===link.hash)){captureReading();save();}});
+
+const toc=document.getElementById('toc');let part='';
+lessons.forEach((lesson,index)=>{
+ if(lesson.dataset.part!==part){part=lesson.dataset.part;const li=document.createElement('li');li.className='group';li.textContent=part;toc.append(li);}
+ const li=document.createElement('li'),a=document.createElement('a');a.href='#'+lesson.id;
+ const num=document.createElement('span');num.className='num';num.textContent=index+1;
+ const title=document.createElement('span');title.textContent=lesson.dataset.title;
+ const done=document.createElement('span');done.className='done';done.setAttribute('aria-label','Studied');done.textContent='✓';done.hidden=!state.done[lesson.id];
+ a.append(num,title,done);li.append(a);toc.append(li);
+ a.addEventListener('click',()=>{if(matchMedia('(max-width:650px)').matches)document.getElementById('contents').open=false;});
+ const notes=document.createElement('div');notes.className='notes';const label=document.createElement('label');label.htmlFor='notes-'+lesson.id;label.textContent='Your explanation';const input=document.createElement('textarea');input.id=label.htmlFor;input.value=typeof state.notes[lesson.id]==='string'?state.notes[lesson.id]:'';input.placeholder='Explain the rule, assumption, or counterexample in your own words.';const noteStatus=document.createElement('small');noteStatus.className='save-state';noteStatus.textContent=diskStatus==='saved'?'Saved to this Mac.':storage?'Saved in this browser.':'Browser storage is unavailable; notes last for this session.';notes.append(label,input,noteStatus);lesson.append(notes);input.addEventListener('input',()=>{state.notes[lesson.id]=input.value;save();});
+ const footer=document.createElement('div');footer.className='lesson-footer';const completeLabel=document.createElement('label'),complete=document.createElement('input');complete.type='checkbox';complete.checked=!!state.done[lesson.id];completeLabel.append(complete,document.createTextNode('Mark studied'));complete.addEventListener('change',()=>{state.done[lesson.id]=complete.checked;done.hidden=!complete.checked;save();updateProgress();});
+ const pager=document.createElement('div');pager.className='pager';if(index>0){const prev=document.createElement('a');prev.href='#'+lessons[index-1].id;prev.textContent='Previous';pager.append(prev);}if(index<lessons.length-1){const next=document.createElement('a');next.href='#'+lessons[index+1].id;next.textContent='Next lesson';pager.append(next);}footer.append(completeLabel,pager);lesson.append(footer);
+});
+const lessonScroll=document.getElementById('lesson-scroll');
+const contents=document.getElementById('contents');
+const sidebar=document.querySelector('.sidebar');
+const up=document.getElementById('lessons-up');
+const down=document.getElementById('lessons-down');
+function updateLessonRange(){
+ const links=[...toc.querySelectorAll('a')].filter(a=>!a.closest('li').hidden);
+ const bounds=lessonScroll.getBoundingClientRect();
+ const visible=links.map((a,index)=>({index,rect:a.getBoundingClientRect()})).filter(item=>item.rect.height>0&&item.rect.bottom>bounds.top+2&&item.rect.top<bounds.bottom-2);
+ const range=document.getElementById('lesson-range');
+ range.textContent=visible.length?(visible[0].index+1)+'–'+(visible.at(-1).index+1)+' of '+links.length:links.length+' lessons';
+ up.disabled=lessonScroll.scrollTop<=1;
+ down.disabled=lessonScroll.scrollTop+lessonScroll.clientHeight>=lessonScroll.scrollHeight-1;
+}
+function revealCurrentLesson(){
+ if(!contents.open)return;
+ const current=toc.querySelector('[aria-current="page"]');
+ if(!current||current.closest('li').hidden)return;
+ const bounds=lessonScroll.getBoundingClientRect(),rect=current.getBoundingClientRect();
+ if(rect.top<bounds.top+8)lessonScroll.scrollTop-=bounds.top+8-rect.top;
+ else if(rect.bottom>bounds.bottom-8)lessonScroll.scrollTop+=rect.bottom-bounds.bottom+8;
+ updateLessonRange();
+}
+function fitContents(){
+ const top=Math.max(12,sidebar.getBoundingClientRect().top);
+ const height=Math.max(200,Math.min(900,window.innerHeight-top-12));
+ const value=Math.round(height)+'px';
+ if(sidebar.style.getPropertyValue('--sidebar-height')!==value)sidebar.style.setProperty('--sidebar-height',value);
+ const padding=getComputedStyle(sidebar);
+ const available=Math.round(height-parseFloat(padding.paddingTop)-parseFloat(padding.paddingBottom)-contents.querySelector('summary').getBoundingClientRect().height-8)+'px';
+ if(sidebar.style.getPropertyValue('--contents-height')!==available)sidebar.style.setProperty('--contents-height',available);
+ updateLessonRange();
+}
+lessonScroll.addEventListener('scroll',updateLessonRange,{passive:true});
+up.addEventListener('click',()=>lessonScroll.scrollBy({top:-lessonScroll.clientHeight*.8,behavior:'instant'}));
+down.addEventListener('click',()=>lessonScroll.scrollBy({top:lessonScroll.clientHeight*.8,behavior:'instant'}));
+contents.addEventListener('toggle',()=>requestAnimationFrame(()=>{fitContents();revealCurrentLesson();}));
+window.addEventListener('resize',()=>{fitContents();revealCurrentLesson();});
+window.addEventListener('scroll',fitContents,{passive:true});
+if(typeof ResizeObserver!=='undefined')new ResizeObserver(updateLessonRange).observe(lessonScroll);
+requestAnimationFrame(()=>{fitContents();revealCurrentLesson();});
+function updateProgress(){const count=lessons.filter(l=>state.done[l.id]).length;document.getElementById('progress-text').textContent=count+' / '+lessons.length+' studied';const bar=document.getElementById('course-progress');bar.max=lessons.length;bar.value=count;}
+const videoPages='https://lamport.azurewebsites.net/video/';
+const lecture=(number,yt,title,length,about,page,script,fix)=>({label:'Lecture '+number,by:'Leslie Lamport',yt,title,length,about,page:videoPages+page+'.html',script:videoPages+script+'-script.pdf',fix:fix&&videoPages+'corrections.html#'+fix});
+const videos={
+ talk:{label:'Talk',by:'Microsoft Research',yt:'-4Yp3j_jk8Q',title:'Leslie Lamport: Thinking Above the Code',about:'Why to think about what a program should do, and write it down, before writing code.'},
+ l1:lecture(1,'p54W-XOIEF8','Introduction to TLA+','20:19','What TLA+ is, why you might use it, and the concept of a state machine.','intro','video1','lecture1'),
+ l2:lecture(2,'4snwZl726c4','State Machines in TLA+','15:41','How a simple state machine is described in TLA+: your first glimpse of a specification.','smintla','video2'),
+ l3:lecture(3,'4NtHUfXlf4g','Resources and Tools','11:14','Learning resources, then using the Toolbox to open a spec, pretty-print it, and run TLC.','video3','video3','lecture3'),
+ l4:lecture(4,'IW0oA3Pxe-Q','Die Hard','19:40','Start writing TLA+ specs and checking them with the parser and TLC.','video4','video4','lecture4'),
+ l5:lecture(5,'JwO4yPSEp-0','Transaction Commit','24:40','Commitment specified, and how to use mathematical functions in specifications.','video5','video5','lecture5'),
+ l6:lecture(6,'U4mlGqXjtoA','Two-Phase Commit','21:23','How commitment is achieved, plus records in TLA+ and more about TLC.','video6','video6','lecture6'),
+ l7:lecture(7,'u7fTLyiSnZw','Paxos Commit','19:47','A real fault-tolerant commit algorithm, and operations for constructing and combining sets.','video7','video7','lecture7'),
+ l8a:lecture('8, part 1','1cp-Bv2ILT4','Implementation: Preliminaries','15:54','Introduces temporal formulas, ahead of what it means for one spec to implement another.','video8a','video8a','lecture8-1'),
+ l8b:lecture('8, part 2','zGmR2qdyxss','Implementation: How it Works','12:14','What it means for one specification to implement another.','video8b','video8b'),
+ l9a:lecture('9, part 1','G2QkMpiVFDo','The Alternating Bit Protocol: The High Level Specification','20:52','Liveness, which describes what must happen, and fairness.','video9a','video9a'),
+ l9b:lecture('9, part 2','ata84UpVJkU','The Alternating Bit Protocol: The Protocol','18:46','The protocol itself, continuing liveness and fairness.','video9b','video9b','lecture9-2'),
+ l10a:lecture('10, part 1','QS_A7Nu02lA','Implementation with Refinement: Preliminaries','19:53','The general meaning of implementation.','video10a','video10a','lecture10-1'),
+ l10b:lecture('10, part 2','iS9voO5CGBg','Implementation with Refinement: Refinement Mappings','21:27','Refinement mappings, which the general meaning of implementation depends on.','video10b','video10b'),
+ all:{label:'Full playlist',by:'Leslie Lamport',list:'PLWAv2Etpa7AOAwkreYImYt0gIpOdWQevD',title:'The TLA+ Video Course',length:'13 videos',about:'Every lecture in order. YouTube labels lecture 8 “Paxos Commit”; Lamport’s title is “Implementation”.',page:videoPages+'videos.html'}
+};
+const lessonVideos={orientation:['talk','l1'],states:['l2'],sets:['l5','l6'],counter:['l4'],tools:['l3'],fairness:['l9a','l9b'],messages:['l9b'],transactions:['l5','l6','l7'],consensus:['l7'],refinement:['l8a','l8b','l10a','l10b'],review:['all']};
+let closeVideo=null;
+function stopVideo(){if(closeVideo)closeVideo();}
+function videoLink(text,href){const a=document.createElement('a');a.target='_blank';a.rel='noopener noreferrer';a.href=href;a.textContent=text;return a;}
+function videoCard(video){
+ const card=document.createElement('div');card.className='video';
+ const play=document.createElement('button');play.type='button';play.className='video-play';
+ const icon=document.createElement('span');icon.className='video-icon';icon.setAttribute('aria-hidden','true');icon.textContent='▶';
+ const text=document.createElement('span'),name=document.createElement('span'),meta=document.createElement('span');
+ name.className='video-name';name.textContent=video.title;
+ meta.className='video-meta';meta.textContent=[video.label,video.length,video.by].filter(Boolean).join(' · ');
+ text.append(name,meta);play.append(icon,text);play.setAttribute('aria-label','Play '+video.title);
+ const about=document.createElement('p');about.className='video-about';about.textContent=video.about;
+ const links=document.createElement('div');links.className='video-links';
+ const close=document.createElement('button');close.type='button';close.className='video-close';close.textContent='Close video';close.hidden=true;
+ links.append(close,videoLink('Open on YouTube',video.list?'https://www.youtube.com/playlist?list='+video.list:'https://www.youtube.com/watch?v='+video.yt));
+ if(video.page)links.append(videoLink(video.list?'Lamport’s course page':'Lamport’s page',video.page));
+ if(video.script)links.append(videoLink('Script (PDF)',video.script));
+ if(video.fix)links.append(videoLink('Corrections',video.fix));
+ let frame=null;
+ function remove(returnFocus){frame.remove();frame=null;closeVideo=null;play.hidden=false;close.hidden=true;if(returnFocus)play.focus();}
+ play.addEventListener('click',()=>{
+  stopVideo();
+  frame=document.createElement('div');frame.className='video-frame';
+  const iframe=document.createElement('iframe');iframe.title=video.title;iframe.allow='autoplay; encrypted-media; picture-in-picture; fullscreen';iframe.allowFullscreen=true;iframe.referrerPolicy='strict-origin-when-cross-origin';
+  iframe.src='https://www.youtube-nocookie.com/embed/'+(video.list?'videoseries?list='+video.list+'&':video.yt+'?')+'autoplay=1&rel=0';
+  frame.append(iframe);card.prepend(frame);play.hidden=true;close.hidden=false;closeVideo=()=>remove(false);iframe.focus();
+ });
+ close.addEventListener('click',()=>remove(true));
+ card.append(play,about,links);return card;
+}
+Object.entries(lessonVideos).forEach(([id,keys])=>{
+ const lesson=document.getElementById(id);
+ const block=document.createElement('section');block.className='videos';block.setAttribute('aria-labelledby','videos-'+id);
+ const heading=document.createElement('h2');heading.id='videos-'+id;heading.textContent=keys.length>1?'Videos for this topic':'Video for this topic';
+ const note=document.createElement('p');note.className='videos-note';note.textContent='Plays here and needs internet. The lesson works without it.';
+ block.append(heading,note,...keys.map(k=>videoCard(videos[k])));
+ lesson.querySelector('h1').nextElementSibling.after(block);
+});
+function showLesson(id,focus=false){
+ stopVideo();
+ const lesson=lessons.find(l=>l.id===id)||lessons[0];
+ restoringScroll=true;shownLesson=lesson.id;
+ lessons.forEach(l=>l.hidden=l!==lesson);
+ toc.querySelectorAll('a').forEach(a=>{if(a.hash==='#'+lesson.id)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
+ state.current=lesson.id;save();document.title=lesson.dataset.title+' · TLA+ course';
+ requestAnimationFrame(()=>{
+  const extent=Math.max(0,document.documentElement.scrollHeight-window.innerHeight);
+  window.scrollTo({top:(state.reading[lesson.id]||0)*extent,behavior:'instant'});
+  revealCurrentLesson();
+  if(focus)document.getElementById('content').focus({preventScroll:true});
+  requestAnimationFrame(()=>{restoringScroll=false;});
+ });
+}
+window.addEventListener('hashchange',()=>{const id=location.hash.slice(1);if(lessons.some(l=>l.id===id))showLesson(id,true);});
+showLesson(lessons.some(l=>l.id===location.hash.slice(1))?location.hash.slice(1):state.current);
+if(matchMedia('(max-width:650px)').matches)document.getElementById('contents').open=false;
+matchMedia('(max-width:650px)').addEventListener('change',event=>{document.getElementById('contents').open=!event.matches;});
+const search=document.getElementById('search');search.addEventListener('input',()=>{const query=search.value.trim().toLowerCase();let count=0;toc.querySelectorAll('li:not(.group)').forEach(li=>{const lesson=lessons.find(l=>'#'+l.id===li.querySelector('a').hash);const match=!query||lesson.textContent.toLowerCase().includes(query);li.hidden=!match;if(match)count++;});toc.querySelectorAll('.group').forEach(group=>{let next=group.nextElementSibling,visible=false;while(next&&!next.classList.contains('group')){if(!next.hidden)visible=true;next=next.nextElementSibling;}group.hidden=!visible;});const status=document.getElementById('search-status');status.hidden=!query;status.textContent=count?count+' matching lessons':'No matching lessons. Try another term.';lessonScroll.scrollTop=0;requestAnimationFrame(updateLessonRange);});
+function setTheme(){document.documentElement.dataset.theme=state.theme;document.getElementById('theme').textContent=state.theme==='dark'?'Light mode':'Dark mode';}setTheme();document.getElementById('theme').addEventListener('click',()=>{state.theme=state.theme==='light'?'dark':'light';setTheme();save();});
+let openBefore=[];window.addEventListener('beforeprint',()=>{openBefore=[...document.querySelectorAll('details.answer')].map(d=>[d,d.open]);openBefore.forEach(([d])=>d.open=true);});window.addEventListener('afterprint',()=>{openBefore.forEach(([d,open])=>d.open=open);});document.getElementById('print').addEventListener('click',()=>window.print());
+document.querySelectorAll('.quiz').forEach((quiz,index)=>{const button=quiz.querySelector('button'),feedback=quiz.querySelector('.quiz-feedback'),id=quiz.closest('.lesson').id+'-'+index;const saved=state.answers[id];if(typeof saved==='string'){const input=[...quiz.querySelectorAll('input')].find(i=>i.value===saved);if(input)input.checked=true;}
+button.addEventListener('click',()=>{const selected=quiz.querySelector('input:checked');if(!selected){feedback.textContent='Choose an answer first.';feedback.className='quiz-feedback';return;}const correct=selected.value===quiz.dataset.answer;feedback.textContent=(correct?'Correct. ':'Try again. ')+quiz.dataset.explain;feedback.className='quiz-feedback '+(correct?'good':'bad');state.answers[id]=selected.value;save();});});
+document.querySelectorAll('pre').forEach(pre=>{const row=document.createElement('div');row.className='code-tools';const button=document.createElement('button');button.type='button';button.textContent='Copy code';button.addEventListener('click',async()=>{const text=pre.textContent;try{if(navigator.clipboard&&window.isSecureContext)await navigator.clipboard.writeText(text);else{const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.top='-9999px';document.body.append(ta);ta.select();const ok=document.execCommand('copy');ta.remove();if(!ok)throw Error('Copy unavailable');}button.textContent='Copied';}catch{button.textContent='Select and copy the code';}setTimeout(()=>button.textContent='Copy code',2200);});row.append(button);pre.after(row);});
+updateProgress();
+})();
+</script>
+<script>
+(() => {
+  'use strict';
+  const byId = id => document.getElementById(id);
+  const listen = (id, event, fn) => byId(id)?.addEventListener(event, fn);
+  const text = (id, value) => { const el = byId(id); if (el) el.textContent = value; };
+  const clamp = (value, low, high, fallback) => {
+    const n = Number(value);
+    return Number.isFinite(n) && String(value).trim() !== '' ? Math.max(low, Math.min(high, Math.round(n))) : fallback;
+  };
+  const node = (tag, cls, content) => {
+    const el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (content !== undefined) el.textContent = content;
+    return el;
+  };
+
+  function initCounter() {
+    const graph = byId('counter-graph');
+    if (!graph) return;
+    let current = 0;
+    const max = () => clamp(byId('counter-max').value, 1, 6, 3);
+    const buggy = () => byId('counter-bug').checked;
+    const successor = x => (buggy() ? x <= max() : x < max()) ? x + 1 : null;
+    function reachable() {
+      const queue = [0], seen = new Set(queue), predecessor = new Map();
+      while (queue.length) {
+        const state = queue.shift();
+        const next = successor(state);
+        if (next !== null && !seen.has(next)) {
+          seen.add(next);
+          predecessor.set(next, state);
+          queue.push(next);
+        }
+      }
+      return { states: [...seen], predecessor };
+    }
+    function svg(tag, attrs, content) {
+      const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for (const [key, val] of Object.entries(attrs)) el.setAttribute(key, val);
+      if (content !== undefined) el.textContent = content;
+      return el;
+    }
+    function draw() {
+      const {states} = reachable();
+      const width = Math.max(240, Math.round(graph.clientWidth || 620));
+      const columns = Math.max(2, Math.min(states.length, Math.floor((width - 20) / 86)));
+      const rows = Math.ceil(states.length / columns);
+      const height = rows * 86 + 14;
+      graph.setAttribute('viewBox', `0 0 ${width} ${height}`);
+      graph.replaceChildren();
+      graph.append(svg('title', {}, `Counter graph: states ${states.join(', ')}. Current value ${current}. Bound ${max()}.`));
+      const defs = svg('defs', {}), marker = svg('marker', {id:'counter-arrowhead', viewBox:'0 0 10 10', refX:8, refY:5, markerWidth:5, markerHeight:5, orient:'auto-start-reverse'});
+      marker.append(svg('path', {d:'M 0 0 L 10 5 L 0 10 z', fill:'var(--muted)'}));
+      defs.append(marker); graph.append(defs);
+      const gap = (width - 70) / Math.max(1, columns - 1);
+      const positions = states.map((_, i) => {
+        const row = Math.floor(i / columns), col = i % columns;
+        return {x:35 + (row % 2 ? columns - 1 - col : col) * gap, y:36 + row * 86};
+      });
+      positions.forEach((p, i) => {
+        if (i === 0) return;
+        const prev = positions[i - 1], dx=p.x-prev.x, dy=p.y-prev.y, len=Math.hypot(dx,dy);
+        graph.append(svg('line', {x1:prev.x+dx/len*26,y1:prev.y+dy/len*26,x2:p.x-dx/len*29,y2:p.y-dy/len*29,class:'edge','marker-end':'url(#counter-arrowhead)'}));
+      });
+      positions.forEach((p, i) => {
+        const value = states[i];
+        const classes = ['vertex'];
+        if (value === current) classes.push('current');
+        if (value > max()) classes.push('failure');
+        graph.append(svg('circle', {cx:p.x,cy:p.y,r:25,class:classes.join(' ')}));
+        graph.append(svg('text', {x:p.x,y:p.y+5,'text-anchor':'middle'}, `x=${value}`));
+        if (value > max()) graph.append(svg('text', {x:p.x,y:p.y+46,'text-anchor':'middle'}, 'unsafe'));
+      });
+      byId('counter-step').disabled = successor(current) === null;
+    }
+    function status(message, bad=false) {
+      const el=byId('counter-status'); el.textContent=message;
+      el.classList.toggle('bad',bad); el.classList.toggle('good',!bad);
+    }
+    function restart() {
+      byId('counter-max').value=max(); current=0; draw();
+      status(`Initial state x = 0. Invariant x ≤ ${max()} holds.`);
+    }
+    listen('counter-step','click',()=>{
+      const next=successor(current); if(next===null)return;
+      current=next; draw();
+      status(`Current state x = ${current}. ${current>max()?'Invariant violated':'Invariant holds'}: x ≤ ${max()}.`,current>max());
+    });
+    listen('counter-explore','click',()=>{
+      const {states,predecessor}=reachable();
+      const badState=states.find(x=>x>max());
+      if(badState!==undefined){
+        const trace=[];let state=badState;
+        for(;;){trace.unshift(state);if(!predecessor.has(state))break;state=predecessor.get(state);}
+        current=badState; draw(); status(`JavaScript BFS completed: ${states.length} reachable states. Shortest violation: ${trace.join(' → ')}.`,true);
+      }else{
+        draw();status(`JavaScript BFS completed: ${states.length} reachable states. No state violates x ≤ ${max()} in this model.`);
+      }
+    });
+    listen('counter-reset','click',restart);listen('counter-max','change',restart);listen('counter-bug','change',restart);
+    if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>draw()).observe(graph);
+    restart();
+  }
+
+  function initTicket() {
+    if(!byId('ticket-lab'))return;
+    let index=0;
+    const paths={
+      split:[
+        ['Not checked','Not checked',1,0,'Initial state.'],
+        ['Saw one ticket','Not checked',1,0,'A checks availability.'],
+        ['Saw one ticket','Saw one ticket',1,0,'B checks before A reserves. Both checks pass.'],
+        ['Reserved','Saw one ticket',0,1,'A reserves. B still relies on its earlier observation.'],
+        ['Reserved','Reserved',-1,2,'B reserves from a stale check. One ticket has been sold twice.']
+      ],
+      atomic:[
+        ['Not attempted','Not attempted',1,0,'Initial state.'],
+        ['Reserved','Not attempted',0,1,'A checks and reserves in one atomic action.'],
+        ['Reserved','Cannot reserve',0,1,'B cannot take Reserve: its availability guard is false. The modeled state stays unchanged.']
+      ]
+    };
+    function draw(){
+      const path=paths[byId('ticket-mode').value],s=path[index];
+      text('ticket-a',s[0]);text('ticket-b',s[1]);text('ticket-stock',`${s[2]} left · ${s[3]} reservations`);
+      text('ticket-log',`Step ${index} of ${path.length-1}\n${s[4]}\n${s[3]>1?'VIOLATION: reservations > 1.':'Invariant holds: reservations ≤ 1.'}`);
+      byId('ticket-log').classList.toggle('bad',s[3]>1);byId('ticket-next').disabled=index===path.length-1;
+    }
+    function reset(){index=0;draw();}
+    listen('ticket-next','click',()=>{if(index<paths[byId('ticket-mode').value].length-1)index++;draw();});
+    listen('ticket-reset','click',reset);listen('ticket-mode','change',reset);draw();
+  }
+
+  function initRetry(){
+    if(!byId('retry-lab'))return;
+    let index=0;
+    const paths={
+      unsafe:[
+        [0,false,'Worker receives request r.'],
+        [1,false,'The charge is durable, but the request ID has not been recorded.'],
+        [1,false,'Worker crashes. Volatile progress is lost; the durable charge remains.'],
+        [2,false,'After recovery, the retry sees no durable ID and charges again.'],
+        [2,true,'The ID is finally recorded. The duplicate durable effect cannot be undone by deduplication.']
+      ],
+      safe:[
+        [0,false,'Worker receives request r.'],
+        [1,true,'One atomic durable commit records both the charge and request ID.'],
+        [1,true,'Worker crashes before replying. Both durable records survive.'],
+        [1,true,'After recovery, the retry finds r and returns the prior result without another charge.']
+      ]
+    };
+    function draw(){
+      const path=paths[byId('retry-mode').value],s=path[index];
+      text('retry-store',`effects = ${s[0]}; seen(r) = ${s[1]}`);
+      text('retry-log',`Step ${index} of ${path.length-1}\n${s[2]}\n${s[0]>1?'VIOLATION: effects(r) > 1.':'No duplicate effect so far: effects(r) ≤ 1.'}`);
+      byId('retry-log').classList.toggle('bad',s[0]>1);byId('retry-next').disabled=index===path.length-1;
+    }
+    function reset(){index=0;draw();}
+    listen('retry-next','click',()=>{if(index<paths[byId('retry-mode').value].length-1)index++;draw();});
+    listen('retry-reset','click',reset);listen('retry-mode','change',reset);draw();
+  }
+
+  function initFairness(){
+    if(!byId('fair-lab'))return;
+    const schedules={
+      always:{enabled:['yes','yes','yes','yes','yes','yes','…'],runs:['no','no','no','no','no','no','…'],result:'Repeating behavior: Serve stays enabled forever but never executes.\nWeak fairness: violated.\nStrong fairness: violated.\nEventual service: false.'},
+      flicker:{enabled:['yes','no','yes','no','yes','no','…'],runs:['no','no','no','no','no','no','…'],result:'Repeating behavior: another action toggles eligibility forever; Serve never executes.\nWeak fairness: satisfied, because Serve is never continuously enabled forever.\nStrong fairness: violated, because Serve is enabled infinitely often.\nEventual service: false.'},
+      served:{enabled:['yes','yes','yes','no','no','no','…'],runs:['no','no','yes','no','no','no','…'],result:'Serve executes once and permanently completes this request; it is disabled thereafter.\nWeak fairness: satisfied.\nStrong fairness: satisfied.\nEventual service: true. Fairness imposes no fixed deadline.'}
+    };
+    function draw(){
+      const s=schedules[byId('fair-pattern').value],timeline=byId('fair-timeline');timeline.replaceChildren();
+      for(const [label,values] of [['Enabled',s.enabled],['Executes',s.runs]]){
+        timeline.append(node('span','',label));const track=node('div','track');
+        values.forEach(v=>track.append(node('span','chip',v)));timeline.append(track);
+      }
+      text('fair-result',s.result);
+    }
+    listen('fair-pattern','change',draw);draw();
+  }
+
+  function initCommit(){
+    if(!byId('commit-lab'))return;
+    let preparedA=false,preparedB=false,alive=true,decision='undecided';
+    let event='Both participants are working.';
+    function draw(){
+      const participant=value=>decision==='commit'?'committed':value?'prepared':'working';
+      text('commit-state',`Coordinator: ${alive?'alive':'crashed'}\nParticipant A: ${participant(preparedA)}\nParticipant B: ${participant(preparedB)}\nDecision: ${decision}\n\n${event}${!alive&&decision==='undecided'?'\nNo Commit transition is enabled. This lab omits recovery; restart to explore another execution.':''}`);
+      byId('prepare-a').disabled=preparedA||decision!=='undecided';byId('prepare-b').disabled=preparedB||decision!=='undecided';
+      byId('commit-crash').disabled=!alive||decision!=='undecided';
+      byId('commit-decide').disabled=!alive||!preparedA||!preparedB||decision!=='undecided';
+    }
+    listen('prepare-a','click',()=>{preparedA=true;event='A durably prepares.';draw();});
+    listen('prepare-b','click',()=>{preparedB=true;event='B durably prepares.';draw();});
+    listen('commit-crash','click',()=>{alive=false;event='The coordinator can no longer decide.';draw();});
+    listen('commit-decide','click',()=>{if(alive&&preparedA&&preparedB&&decision==='undecided'){decision='commit';event='The abstract coordinator commits. Message delivery and recovery are omitted in this lab.';}draw();});
+    listen('commit-reset','click',()=>{preparedA=false;preparedB=false;alive=true;decision='undecided';event='Both participants are working.';draw();});draw();
+  }
+
+  function initQuorum(){
+    if(!byId('quorum-n'))return;
+    function draw(){
+      const n=clamp(byId('quorum-n').value,3,7,3);
+      const r=clamp(byId('quorum-r').value,1,n,Math.min(2,n)),w=clamp(byId('quorum-w').value,1,n,Math.min(2,n));
+      byId('quorum-r').max=n;byId('quorum-w').max=n;byId('quorum-r').value=r;byId('quorum-w').value=w;
+      const write=Array.from({length:w},(_,i)=>i+1),read=Array.from({length:r},(_,i)=>n-r+i+1),overlap=write.filter(i=>read.includes(i));
+      const graph=byId('quorum-graph');graph.replaceChildren();graph.classList.add('flow');
+      for(let i=1;i<=n;i++){
+        const el=node('div','node',`n${i}`);el.append(node('small','',write.includes(i)&&read.includes(i)?'read + write':write.includes(i)?'write':read.includes(i)?'read':'neither'));graph.append(el);
+      }
+      const labels=set=>`{${set.map(i=>'n'+i).join(', ')}}`;
+      text('quorum-result',`N = ${n}, R = ${r}, W = ${w}\nWrite set: ${labels(write)}\nRead set: ${labels(read)}\nIntersection: ${labels(overlap)}\n\n${r+w>n?'Every size-R read set intersects every size-W write set. The sets above show the minimum possible overlap.':'Disjoint read and write sets are possible; the sets above are a counterexample to guaranteed intersection.'}\nIntersection alone does not prove freshness or linearizability: version selection, concurrent writes, and the protocol still matter.`);
+    }
+    for(const id of ['quorum-n','quorum-r','quorum-w'])listen(id,'change',draw);draw();
+  }
+
+  function initFlashcards(){
+    if(!byId('flash-question'))return;
+    const cards=[
+      ['What is a state?','An assignment of values to all modeled variables. A snapshot, not a transition.'],
+      ['What does an action describe?','A relation between the current and next states. Its conjuncts constrain one simultaneous step.'],
+      ["What does x′ mean?",'The value of x in the next state. Equality with a primed expression is a constraint, not an imperative assignment.'],
+      ['Definition or equality: == versus =?','== defines an operator; = compares values.'],
+      ['Set or sequence for a FIFO?','A sequence preserves order and repeated values. A set does neither.'],
+      ['What does [S -> T] denote?','The set of all functions from domain S to codomain T. A maplet expression constructs one function.'],
+      ['What is the usual behavior skeleton?','Init /\\ [][Next]_vars. Every step obeys Next or leaves the variable tuple unchanged.'],
+      ['What happens if a next-state variable is omitted?','It is not implicitly preserved. Mathematically it may be unconstrained; TLC may report an incomplete successor. Use an explicit next-value constraint or UNCHANGED.'],
+      ['Why does the wrong counter guard fail?','x ≤ Max still enables incrementing at Max, producing Max + 1.'],
+      ['What does a completed TLC run establish?','The selected properties for the explored finite model, under its exact assumptions and constraints—not all sizes or the deployed implementation.'],
+      ['What do PlusCal labels determine?','Atomic-step boundaries in the translation. Moving a label changes possible interleavings.'],
+      ['Safety or liveness: every request eventually completes?','Liveness. It rules out infinite behaviors that postpone completion forever.'],
+      ['What is a counterexample to an invariant?','A finite execution prefix reaching a state where the invariant is false.'],
+      ['What are the inductive proof obligations?','Init implies Inv; Inv and each transition imply Inv in the next state; Inv implies the desired safety property.'],
+      ['Weak fairness versus strong fairness?','Weak fairness forbids perpetual postponement when continuously enabled. Strong fairness also covers an action enabled infinitely often. Neither gives a time bound.'],
+      ['Does fairness of A or B ensure B progresses?','No. A can satisfy aggregate fairness while B starves. Analyze enabling and fairness for the individual action.'],
+      ['Does a timeout prove a request had no effect?','No. The server may have applied the effect and lost the reply. Track the client’s knowledge separately from the durable result.'],
+      ['Why atomically persist effect and deduplication ID?','Effect first can duplicate after a crash; ID first can suppress an effect that never happened. The atomic contract must cover both.'],
+      ['Why can two-phase commit block?','Prepared participants may not know the durable global decision while the coordinator is unavailable. Unilateral timeout decisions can violate agreement.'],
+      ['What does R + W > N guarantee?','Intersection of every read set of size R with every write set of size W in that same universe. It alone is not a linearizability proof.'],
+      ['Why is a fencing token useful?','The protected resource can reject stale owners after a newer epoch has been installed. A lease timeout alone does not stop a paused owner from resuming.'],
+      ['Why are majorities insufficient during arbitrary reconfiguration?','A majority of an old configuration may be disjoint from a majority of a new one. The transition protocol must preserve the necessary decision evidence.'],
+      ['What is a refinement mapping?','A mapping from concrete state to abstract state. Concrete steps must correspond to permitted abstract steps or stuttering, with suitable initialization and progress obligations.'],
+      ['Invariant or state constraint?','An invariant is checked and fails on a violating reachable state. A state constraint limits exploration, possibly removing behaviors needed to expose a bug.'],
+      ['History variable versus prophecy variable?','A history variable records past behavior. A prophecy variable can encode a future choice for refinement reasoning. Auxiliary state must not improperly restrict the visible behaviors.'],
+      ['How should a crash action treat durable state?','Erase the intended volatile state, preserve the durable state promised by the storage model, and explicitly frame every other variable.'],
+      ['What makes a capstone model useful?','A precise contract, explicit failure assumptions, justified bounds, meaningful properties, deliberate bug mutations, and recorded evidence from completed checks.']
+    ];
+    let queue=cards.map((_,i)=>i),known=0,revealed=false;
+    function draw(){
+      const complete=queue.length===0;
+      text('flash-count',`${known} / ${cards.length} recalled · ${queue.length} remaining`);
+      text('flash-question',complete?'Review complete':cards[queue[0]][0]);
+      text('flash-answer',complete?'Revisit the difficult cards in a later study session.':cards[queue[0]][1]);
+      byId('flash-answer').hidden=!complete&&!revealed;
+      text('flash-reveal',complete?'Restart review':'Reveal answer');byId('flash-reveal').disabled=!complete&&revealed;
+      byId('flash-again').disabled=complete||!revealed;byId('flash-known').disabled=complete||!revealed;
+    }
+    listen('flash-reveal','click',()=>{
+      if(!queue.length){queue=cards.map((_,i)=>i);known=0;revealed=false;}else revealed=true;
+      draw();
+    });
+    listen('flash-again','click',()=>{
+      if(!revealed||!queue.length)return;
+      const card=queue.shift();queue.splice(Math.min(3,queue.length),0,card);revealed=false;draw();
+    });
+    listen('flash-known','click',()=>{
+      if(!revealed||!queue.length)return;
+      queue.shift();known++;revealed=false;draw();
+    });draw();
+  }
+
+  initCounter();initTicket();initRetry();initFairness();initCommit();initQuorum();initFlashcards();
+})();
+
+</script>
+<script>
+(()=>{
+const el=id=>document.getElementById(id);
+let latest=0, pending=new Set(), view={tag:'idle'}, events=[];
+const query=id=>id===1?'cats':'dogs';
+function drawApp(){
+ el('appstate-choice').textContent=latest?query(latest)+' (request '+latest+')':'No search';
+ el('appstate-screen').textContent=view.tag==='ready'?view.value+' (response '+view.request+')':view.tag;
+ const bad=view.tag==='ready'&&view.request!==latest;
+ el('appstate-log').textContent='latest = '+latest+'; pending = {'+[...pending].join(', ')+'}; ui = '+JSON.stringify(view)+'\n'+events.join('\n')+'\n'+(bad?'VIOLATION: an older response replaced the current view.':'CurrentView holds.');
+ el('appstate-log').classList.toggle('bad',bad);
+ el('appstate-start-a').disabled=latest!==0;el('appstate-start-b').disabled=latest!==1;
+ el('appstate-finish-a').disabled=!pending.has(1);el('appstate-finish-b').disabled=!pending.has(2);
+}
+function start(id){latest=id;pending.add(id);view={tag:'loading',request:id};events.push('Start('+id+'): user searches '+query(id)+'.');drawApp();}
+function finish(id){pending.delete(id);if(!el('appstate-guard').checked||id===latest){view={tag:'ready',request:id,value:query(id)};events.push('Deliver('+id+'): display '+query(id)+'.');}else events.push('Deliver('+id+'): discard the obsolete response.');drawApp();}
+function resetApp(){latest=0;pending=new Set();view={tag:'idle'};events=[];drawApp();}
+el('appstate-start-a').addEventListener('click',()=>start(1));el('appstate-start-b').addEventListener('click',()=>start(2));el('appstate-finish-a').addEventListener('click',()=>finish(1));el('appstate-finish-b').addEventListener('click',()=>finish(2));el('appstate-reset').addEventListener('click',resetApp);el('appstate-guard').addEventListener('change',resetApp);drawApp();
+let source=0,cached=0,valid=false,loading=false,captured=0,cacheEvents=[];
+function drawCache(){
+ el('cache-source').textContent='version '+source;el('cache-flight').textContent=loading?'captured version '+captured:'None';el('cache-value').textContent=valid?'valid version '+cached:'invalid';
+ const bad=valid&&cached!==source;
+ el('cache-log').textContent='sourceVersion = '+source+'; cacheVersion = '+cached+'; valid = '+valid+'\n'+cacheEvents.join('\n')+'\n'+(bad?'VIOLATION: the valid cache contains an obsolete value.':'FreshWhenValid holds.');el('cache-log').classList.toggle('bad',bad);
+ el('cache-begin').disabled=loading||valid;el('cache-write').disabled=source>=2;el('cache-finish').disabled=!loading;
+}
+el('cache-begin').addEventListener('click',()=>{loading=true;captured=source;cacheEvents.push('BeginFill: capture v'+captured+'.');drawCache();});
+el('cache-write').addEventListener('click',()=>{source++;valid=false;cacheEvents.push('WriteAndInvalidate: source is now v'+source+'; invalidate cache.');drawCache();});
+el('cache-finish').addEventListener('click',()=>{loading=false;if(!el('cache-guard').checked||captured===source){cached=captured;valid=true;cacheEvents.push('FinishFill: publish v'+cached+'.');}else cacheEvents.push('FinishFill: reject obsolete v'+captured+'.');drawCache();});
+function resetCache(){source=0;cached=0;valid=false;loading=false;captured=0;cacheEvents=[];drawCache();}
+el('cache-reset').addEventListener('click',resetCache);el('cache-guard').addEventListener('change',resetCache);drawCache();
+})();
+</script>
+</body></html>

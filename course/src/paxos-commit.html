@@ -1,0 +1,221 @@
+<h1>Paxos Commit keeps the decision alive when the transaction manager doesn't.</h1>
+<p class="lead">In two-phase commit, one process holds the decision. If it stops, prepared RMs wait forever. Lecture 7 opens with that problem, shows why the obvious fix is wrong, and then reads the spec of Paxos Commit: a real algorithm by Jim Gray and Leslie Lamport, and a tour of the last TLA+ constructs you need.</p>
+<!--fig:block-->
+<p>This is a TLC trace of TwoPhase plus one <code>TMCrash</code> action, with two RMs. It takes 4 states to reach the bottom of the diagram. There, r1 and r2 are prepared, and the only actions that move a prepared RM need a <code>Commit</code> or <code>Abort</code> message that only the TM can send. Checking the property "once blocked, no step changes anything" gives no error over 112 distinct states. <code>TCConsistent</code> holds as well: nothing is wrong except that nothing happens.</p>
+<h2>While you watch</h2>
+<p>Lamport states plainly that the lecture is about TLA+ and that the paper explains the algorithm, so he goes through the operators and doesn't explain the protocol. This lesson does the reverse order: first the idea, with diagrams, then the operators. Follow the spec alongside him at the <code>Phase2a</code> definition. Pause at the model values and decide whether <code>Acceptor</code> can be a symmetry set before he answers. {{lesson:consensus}} covers one Paxos instance by itself.</p>
+<h2>The fix that fails</h2>
+<p>The textbook answer is a backup TM that takes over when the primary fails. It's simple to build and to test. Then one day the primary decides to commit and pauses. The backup concludes the primary has died.</p>
+<!--fig:backup-->
+<p>This run came from TwoPhase plus a <code>BackupAbort</code> action, with two RMs: TLC reports a <code>TCConsistent</code> violation in a 9-state trace, drawn above. The backup can't distinguish slow from dead, and both TMs' messages are valid. Testing won't easily catch this, because it needs a rare pause. Finding it needs a spec.</p>
+<h2>The idea: several acceptors remember each RM's vote</h2>
+<p>Paxos Commit replaces the TM's one memory with a set of <strong>acceptors</strong>, with the overlap property from {{lesson:replication}}. It runs one separate decision, called an <strong>instance</strong>, per RM, whose outcome is either <code>"prepared"</code> or <code>"aborted"</code>. The field <code>ins</code> in each message says which RM's instance it belongs to.</p>
+<p>A <strong>leader</strong> is any process that believes it's in charge. The spec doesn't care who it is, or how many there are; several may act at once. Here's the normal case, for one RM's instance.</p>
+<!--fig:flow-->
+<p>r1 votes by sending a <code>phase2a</code> message in <strong>ballot</strong> 0, the ballot number reserved for the RM itself. Each acceptor records its vote and announces it in <code>phase2b</code>. Once a majority voted the same value in the same ballot, that value is <strong>chosen</strong>. a3 was slow and it didn't matter. When every instance has chosen <code>"prepared"</code>, a leader may send <code>Commit</code>; if any chose <code>"aborted"</code>, it may send <code>Abort</code>. No single process has to survive.</p>
+<h3>What a new ballot does</h3>
+<p>If an RM's vote seems stuck, a leader starts a higher ballot (<code>Phase1a</code>). An acceptor receiving that message promises to ignore lower ballots by raising <code>mbal</code>, and reports its last vote (<code>Phase1b</code>). Having heard from a majority, the leader sends one value (<code>Phase2a</code>):</p>
+<ul><li>If anyone reported a vote, it sends the value from the highest ballot reported.</li><li>If nobody did, it sends <code>"aborted"</code>. An RM with no recorded vote can't be assumed prepared.</li></ul>
+<!--fig:overlap-->
+<p>On the left, a1 and a2 voted <code>"prepared"</code> in ballot 0, so it's chosen. A leader in ballot 1 hears from a2 and a3. The overlap is a2, whose report forces the leader to send <code>"prepared"</code> too. So the old result survives without the old leader. On the right, no such acceptor exists, and the leader hears nothing: this is the experiment at the end of this lesson.</p>
+<h2>The spec's new constructs</h2>
+<pre><code>Maximum(S) == IF S = {} THEN -1
+                        ELSE CHOOSE n \in S : \A m \in S : n &gt;= m</code></pre>
+<p><strong>CHOOSE.</strong> <code>CHOOSE v \in S : P</code> is some value v in S satisfying P. If there are several, TLA+ doesn't say which; if none, its value is unspecified and TLC reports an error. It isn't random. Like any expression, it equals itself, so TLC gets the same answer every time. Hence <code>x' \in 1..99</code> allows 99 next values and <code>x' = CHOOSE i \in 1..99 : TRUE</code> allows just one. Use it when exactly one v qualifies, as in <code>Maximum</code>, or when the larger expression doesn't depend on which you get. Here's the second kind:</p>
+<pre><code>Phase2a(bal, r) ==
+  /\ ~\E m \in msgs : /\ m.type = "phase2a"
+                      /\ m.bal = bal
+                      /\ m.ins = r
+  /\ \E MS \in Majority :
+       LET mset == {m \in msgs : /\ m.type = "phase1b"
+                                 /\ m.ins = r
+                                 /\ m.mbal = bal
+                                 /\ m.acc \in MS}
+           maxbal == Maximum({m.bal : m \in mset})
+           val == IF maxbal = -1
+                    THEN "aborted"
+                    ELSE (CHOOSE m \in mset : m.bal = maxbal).val
+       IN  /\ \A ac \in MS : \E m \in mset : m.acc = ac
+           /\ Send([type |-&gt; "phase2a", ins |-&gt; r, bal |-&gt; bal, val |-&gt; val])
+  /\ UNCHANGED &lt;&lt;rmState, aState&gt;&gt;</code></pre>
+<p><strong>LET-IN</strong> makes definitions local to one expression. <code>mset</code> filters and <code>{m.bal : m \in mset}</code> maps, the two constructors from {{lesson:replication}}. Several messages in <code>mset</code> may have the top ballot, so <code>CHOOSE</code> may have several choices, but the lecture points out that in any reachable state they all have the same <code>val</code>. Lamport calls this the most subtle part of the algorithm.</p>
+<p><strong>Nested EXCEPT.</strong> The acceptor state is <code>aState[r][a]</code>, a record per acceptor per instance, with fields <code>mbal</code>, <code>bal</code>, and <code>val</code>.</p>
+<pre><code>aState' = [aState EXCEPT ![m.ins][acc].mbal = m.bal,
+                         ![m.ins][acc].bal  = m.bal,
+                         ![m.ins][acc].val  = m.val]</code></pre>
+<p>Read it as three programming assignments to <code>aState[m.ins][acc]</code>'s fields. The first form abbreviates nested <code>EXCEPT</code>s, one per level. Lamport's advice is to remember the idiom rather than decode it.</p>
+<details class="answer"><summary>Show the complete module that was checked</summary><pre><code>----------------------------- MODULE PaxosCommit ----------------------------
+EXTENDS Integers
+
+Maximum(S) == IF S = {} THEN -1
+                        ELSE CHOOSE n \in S : \A m \in S : n &gt;= m
+
+CONSTANTS RM,        \* The set of resource managers
+          Acceptor,  \* The set of acceptors
+          Majority,  \* The sets of acceptors that count as a majority
+          Ballot     \* The set of ballot numbers
+
+ASSUME /\ Ballot \subseteq Nat
+       /\ 0 \in Ballot
+       /\ Majority \subseteq SUBSET Acceptor
+       /\ \A MS1, MS2 \in Majority : MS1 \cap MS2 # {}
+
+Messages ==
+  [type : {"phase1a"}, ins : RM, bal : Ballot \ {0}]
+    \cup
+  [type : {"phase1b"}, ins : RM, mbal : Ballot, bal : Ballot \cup {-1},
+   val : {"prepared", "aborted", "none"}, acc : Acceptor]
+    \cup
+  [type : {"phase2a"}, ins : RM, bal : Ballot, val : {"prepared", "aborted"}]
+    \cup
+  [type : {"phase2b"}, acc : Acceptor, ins : RM, bal : Ballot,
+   val : {"prepared", "aborted"}]
+    \cup
+  [type : {"Commit", "Abort"}]
+-----------------------------------------------------------------------------
+VARIABLES rmState, aState, msgs
+
+PCTypeOK ==
+  /\ rmState \in [RM -&gt; {"working", "prepared", "committed", "aborted"}]
+  /\ aState \in [RM -&gt; [Acceptor -&gt; [mbal : Ballot,
+                                     bal  : Ballot \cup {-1},
+                                     val  : {"prepared", "aborted", "none"}]]]
+  /\ msgs \subseteq Messages
+
+PCInit ==
+  /\ rmState = [r \in RM |-&gt; "working"]
+  /\ aState = [r \in RM |-&gt;
+                 [ac \in Acceptor |-&gt; [mbal |-&gt; 0, bal |-&gt; -1, val |-&gt; "none"]]]
+  /\ msgs = {}
+
+Send(m) == msgs' = msgs \cup {m}
+-----------------------------------------------------------------------------
+\* Resource manager actions. RMs vote by sending a ballot 0 phase 2a message.
+RMPrepare(r) ==
+  /\ rmState[r] = "working"
+  /\ rmState' = [rmState EXCEPT ![r] = "prepared"]
+  /\ Send([type |-&gt; "phase2a", ins |-&gt; r, bal |-&gt; 0, val |-&gt; "prepared"])
+  /\ UNCHANGED aState
+
+RMChooseToAbort(r) ==
+  /\ rmState[r] = "working"
+  /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
+  /\ Send([type |-&gt; "phase2a", ins |-&gt; r, bal |-&gt; 0, val |-&gt; "aborted"])
+  /\ UNCHANGED aState
+
+RMRcvCommitMsg(r) ==
+  /\ [type |-&gt; "Commit"] \in msgs
+  /\ rmState' = [rmState EXCEPT ![r] = "committed"]
+  /\ UNCHANGED &lt;&lt;aState, msgs&gt;&gt;
+
+RMRcvAbortMsg(r) ==
+  /\ [type |-&gt; "Abort"] \in msgs
+  /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
+  /\ UNCHANGED &lt;&lt;aState, msgs&gt;&gt;
+-----------------------------------------------------------------------------
+\* Leader actions: any process that believes it is the leader may do these.
+Phase1a(bal, r) ==
+  /\ Send([type |-&gt; "phase1a", ins |-&gt; r, bal |-&gt; bal])
+  /\ UNCHANGED &lt;&lt;rmState, aState&gt;&gt;
+
+Phase2a(bal, r) ==
+  /\ ~\E m \in msgs : /\ m.type = "phase2a"
+                      /\ m.bal = bal
+                      /\ m.ins = r
+  /\ \E MS \in Majority :
+       LET mset == {m \in msgs : /\ m.type = "phase1b"
+                                 /\ m.ins = r
+                                 /\ m.mbal = bal
+                                 /\ m.acc \in MS}
+           maxbal == Maximum({m.bal : m \in mset})
+           val == IF maxbal = -1
+                    THEN "aborted"
+                    ELSE (CHOOSE m \in mset : m.bal = maxbal).val
+       IN  /\ \A ac \in MS : \E m \in mset : m.acc = ac
+           /\ Send([type |-&gt; "phase2a", ins |-&gt; r, bal |-&gt; bal, val |-&gt; val])
+  /\ UNCHANGED &lt;&lt;rmState, aState&gt;&gt;
+
+PCDecide ==
+  /\ LET Decided(r, v) ==
+           \E b \in Ballot, MS \in Majority :
+             \A ac \in MS : [type |-&gt; "phase2b", ins |-&gt; r,
+                             bal |-&gt; b, val |-&gt; v, acc |-&gt; ac] \in msgs
+     IN  \/ /\ \A r \in RM : Decided(r, "prepared")
+            /\ Send([type |-&gt; "Commit"])
+         \/ /\ \E r \in RM : Decided(r, "aborted")
+            /\ Send([type |-&gt; "Abort"])
+  /\ UNCHANGED &lt;&lt;rmState, aState&gt;&gt;
+-----------------------------------------------------------------------------
+\* Acceptor actions.
+Phase1b(acc) ==
+  \E m \in msgs :
+    /\ m.type = "phase1a"
+    /\ aState[m.ins][acc].mbal &lt; m.bal
+    /\ aState' = [aState EXCEPT ![m.ins][acc].mbal = m.bal]
+    /\ Send([type |-&gt; "phase1b", ins |-&gt; m.ins, mbal |-&gt; m.bal,
+             bal |-&gt; aState[m.ins][acc].bal, val |-&gt; aState[m.ins][acc].val,
+             acc |-&gt; acc])
+    /\ UNCHANGED rmState
+
+Phase2b(acc) ==
+  /\ \E m \in msgs :
+       /\ m.type = "phase2a"
+       /\ aState[m.ins][acc].mbal &lt;= m.bal
+       /\ aState' = [aState EXCEPT ![m.ins][acc].mbal = m.bal,
+                                   ![m.ins][acc].bal  = m.bal,
+                                   ![m.ins][acc].val  = m.val]
+       /\ Send([type |-&gt; "phase2b", ins |-&gt; m.ins, bal |-&gt; m.bal,
+                val |-&gt; m.val, acc |-&gt; acc])
+  /\ UNCHANGED rmState
+-----------------------------------------------------------------------------
+PCNext ==
+  \/ \E r \in RM : \/ RMPrepare(r) \/ RMChooseToAbort(r)
+                   \/ RMRcvCommitMsg(r) \/ RMRcvAbortMsg(r)
+  \/ \E bal \in Ballot \ {0}, r \in RM : Phase1a(bal, r) \/ Phase2a(bal, r)
+  \/ PCDecide
+  \/ \E acc \in Acceptor : Phase1b(acc) \/ Phase2b(acc)
+-----------------------------------------------------------------------------
+TC == INSTANCE TCommit
+TCConsistent == TC!TCConsistent
+=============================================================================</code></pre><p>This was adapted from the official example to the lecture's names and its <code>Maximum</code>. The lecture imports with <code>INSTANCE</code>; here <code>TC == INSTANCE TCommit</code> keeps TCommit's <code>Decide</code> from clashing, so the leader's action is called <code>PCDecide</code>.</p></details>
+<h2>Check a small model</h2>
+<p>The lecture's model is the smallest that could reveal a non-trivial error:</p>
+<pre><code>---- MODULE MCPaxosCommit ----
+EXTENDS PaxosCommit, TLC
+CONSTANTS a1, a2, a3, r1, r2
+Acceptors == {a1, a2, a3}
+RMs == {r1, r2}
+Majorities == &#123;&#123;a1, a2}, {a1, a3}, {a2, a3}}
+Sym == Permutations(Acceptors) \cup Permutations(RMs)
+====</code></pre>
+<pre><code>INIT PCInit
+NEXT PCNext
+CONSTANTS a1 = a1
+          a2 = a2
+          a3 = a3
+          r1 = r1
+          r2 = r2
+          Acceptor &lt;- Acceptors
+          RM &lt;- RMs
+          Majority &lt;- Majorities
+          Ballot = {0, 1}
+SYMMETRY Sym
+INVARIANT PCTypeOK
+INVARIANT TCConsistent
+CHECK_DEADLOCK FALSE</code></pre>
+<p>Can <code>Acceptor</code> be a symmetry set when a1, a2, a3 appear in the value of <code>Majority</code>? Yes, because that expression is symmetric: swap a1 and a3, and you get the same set. This is the rule promised in {{lesson:transactions}}: elements of a symmetry set may be used in another constant's value only if that expression is symmetric in them, and those elements, or any constant assigned them, must not appear in a <code>CHOOSE</code>. The <code>CHOOSE</code>s here range over messages and numbers, not over <code>RM</code> or <code>Acceptor</code>.</p>
+<p>Result: <strong>no error, 119,992 distinct states</strong> (1,545,109 generated), with <code>PCTypeOK</code> and <code>TCConsistent</code> invariant, in line with the lecture's figure. Time and space grow exponentially with model size. Lamport says one more ballot makes it vastly bigger; that model wasn't re-run here.</p>
+<h2>What good is such a small model?</h2>
+<p>Break the overlap: delete a2 from the last element, so <code>Majority</code> is <code>{ {a1, a2}, {a1, a3}, {a3} }</code>. It's no longer symmetric, so <code>Acceptor</code> stops being a symmetry set. Comment out the conjunct in <code>ASSUME</code>, since TLC would otherwise reject it. TLC reports <code>TCConsistent</code> violated, with a <strong>14-state</strong> trace, as in the lecture.</p>
+<div class="table-wrap"><table><thead><tr><th>States</th><th>TLC's actions</th><th>What happened</th></tr></thead><tbody>
+<tr><td>2–3</td><td><code>RMPrepare(r1)</code>, <code>RMPrepare(r2)</code></td><td>Both RMs vote prepared in ballot 0</td></tr>
+<tr><td>4–6</td><td><code>Phase1a(1,r1)</code>, <code>Phase1b(a1)</code>, <code>Phase1b(a2)</code></td><td>A leader polls {a1, a2} for r1; no one has voted</td></tr>
+<tr><td>7</td><td><code>Phase2a(1,r1)</code></td><td>So it sends "aborted" in ballot 1</td></tr>
+<tr><td>8–9</td><td><code>Phase2b(a3)</code> twice</td><td>a3 votes r1 prepared (ballot 0), then aborted (ballot 1)</td></tr>
+<tr><td>10–11</td><td><code>PCDecide</code>, <code>RMRcvAbortMsg(r1)</code></td><td>{a3} "chose" aborted for r1: Abort sent, r1 aborts</td></tr>
+<tr><td>12–14</td><td><code>Phase2b(a3)</code>, <code>PCDecide</code>, <code>RMRcvCommitMsg(r2)</code></td><td>a3's vote for r2 means both instances "chose" prepared: Commit sent, r2 commits</td></tr>
+</tbody></table></div>
+<p>Every <code>phase2b</code> message stays in <code>msgs</code>, so a3's old vote for r1 still counts. A leader that consulted {a1, a2} couldn't see a3, which is the right panel of the overlap diagram. Even a very small model catches a real error in a real algorithm.</p>
+<details class="answer"><summary>Predict: does Paxos Commit still block if a majority of acceptors stops?</summary><p>Yes. No new ballot can complete, so an undecided instance stays undecided. What improves is the failure it tolerates: any process can act as leader, and any single acceptor can fail, with three acceptors. Safety never relied on anyone being up; the checked model allows steps simply never to happen.</p></details>
+<div class="quiz" data-answer="1" data-explain="Ballots allow a new leader to try. Overlap makes it hear from someone who voted, and the Phase2a rule makes it repeat that value."><fieldset><legend>Why can a new leader safely take over in Paxos Commit but not a backup TM in two-phase commit?</legend><label><input type="radio" name="q-paxos-commit" value="0">It waits long enough to be sure the old leader has died</label><label><input type="radio" name="q-paxos-commit" value="1">A majority it asks overlaps any majority that voted, and it must repeat what it hears</label><label><input type="radio" name="q-paxos-commit" value="2">Only one leader can exist at a time</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<p class="resources">Read the algorithm: <em>Consensus on Transaction Commit</em>, Jim Gray and Leslie Lamport, ACM TODS 31(1), 2006, linked from <a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/video/videos.html">the lecture page</a>. The official module is in the <a target="_blank" rel="noopener noreferrer" href="https://github.com/tlaplus/Examples">examples repository</a>.</p>

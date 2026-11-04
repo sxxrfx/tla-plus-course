@@ -1,0 +1,3 @@
+---- MODULE TwoPhaseAbortTrace ----
+EXTENDS TwoPhaseTraces
+====

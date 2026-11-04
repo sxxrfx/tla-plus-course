@@ -1,0 +1,122 @@
+<h1>Two safe configurations can have an unsafe handoff.</h1>
+<p class="lead">Quorum overlap protects you inside one membership. Changing the membership needs its own argument.</p>
+<p>This builds on {{lesson:replication}}, where any two majorities of one set had to intersect, and on {{lesson:consensus}}, where that intersection carried decisions forward. Here the proof’s premise stops being true, because the two quorums come from different sets.</p>
+<p>Suppose the old cluster is {A,B,C} and the new cluster is {C,D,E}. Each uses majorities of two.</p>
+<!--fig:disjoint-->
+<p>The diagram shows the problem: the configurations share C, yet the quorums {A,B} and {C,D} share nothing. A proof that every pair of quorums intersects <em>within one configuration</em> says nothing about this pair.</p>
+<h2>The joint rule, and what it does not do</h2>
+<p><em>Joint consensus</em> requires decisions during the transition to satisfy both old and new quorum rules. For this pair the smallest such sets are {A,C,D}, {A,C,E}, {B,C,D}, {B,C,E}, and {A,B,D,E}. Each contains a majority of Old, so each intersects any earlier old quorum.</p>
+<!--fig:joint-->
+<p>That overlap, shown in the diagram at A, blocks a conflicting decision <em>during</em> the transition. It does nothing after the switch, when New is on its own. A joint phase with no further rule still fails, as you will see below. The bridge is the transition protocol: when old-only decisions stop, and what the new majority must hold before it takes over.</p>
+<!--fig:phases-->
+<h2>A model of the handoff</h2>
+<p>This module tracks one decision. A node stores at most one value. <code>Decide</code> is the acknowledgement, under whatever rule the current phase uses. <code>Copy</code> is state transfer: it brings a new node up to the decided state as it is at that moment. Copying is separate from voting authority, because a caught-up replica does not vote until the phase says so.</p>
+<pre><code>---------------- MODULE Reconfig ----------------
+EXTENDS Naturals, FiniteSets
+CONSTANT Mode
+ASSUME Mode \in {"Direct", "CopyOnly", "JointNoEvidence", "Joint", "OldLingers"}
+Old == {"A", "B", "C"}
+New == {"C", "D", "E"}
+Nodes == Old \cup New
+Values == {"X", "Y"}
+VARIABLES phase,     \* "old", "joint", or "new"
+          val,       \* val[n]: the value node n has durably stored
+          decided,   \* values acknowledged as decided
+          copied     \* new nodes that have run the state copy
+vars == &lt;&lt;phase, val, decided, copied&gt;&gt;
+
+Init == /\ phase = "old"
+        /\ val = [n \in Nodes |-&gt; "none"]
+        /\ decided = {}
+        /\ copied = {}
+
+Holding(v) == {n \in Nodes : val[n] = v}
+Majority(s, c) == Cardinality(s \cap c) * 2 &gt; Cardinality(c)
+JointAck(s) == Majority(s, Old) /\ Majority(s, New)
+
+\* The rule this phase uses to acknowledge a decision.
+CanDecide(v) ==
+    \/ phase = "old" /\ Majority(Holding(v), Old)
+    \/ phase = "joint" /\ JointAck(Holding(v))
+    \/ phase = "new" /\ Majority(Holding(v), New)
+    \/ Mode = "OldLingers" /\ Majority(Holding(v), Old)
+
+Voters == CASE phase = "old" -&gt; Old
+            [] phase = "joint" -&gt; Nodes
+            [] phase = "new" -&gt;
+                 IF Mode = "OldLingers" THEN Nodes ELSE New
+
+Store(n, v) == /\ n \in Voters
+               /\ val[n] = "none"
+               /\ val' = [val EXCEPT ![n] = v]
+               /\ UNCHANGED &lt;&lt;phase, decided, copied&gt;&gt;
+
+Decide(v) == /\ CanDecide(v)
+             /\ decided' = decided \cup {v}
+             /\ UNCHANGED &lt;&lt;phase, val, copied&gt;&gt;
+
+\* Copy the decided state, as it is right now, to a new node.
+Copy(n) == /\ n \in New
+           /\ copied' = copied \cup {n}
+           /\ val' = IF decided = {} THEN val
+                     ELSE [val EXCEPT ![n] = CHOOSE v \in decided : TRUE]
+           /\ UNCHANGED &lt;&lt;phase, decided&gt;&gt;
+
+UsesJoint == Mode \in {"JointNoEvidence", "Joint", "OldLingers"}
+
+EnterJoint == /\ UsesJoint /\ phase = "old"
+              /\ phase' = "joint"
+              /\ UNCHANGED &lt;&lt;val, decided, copied&gt;&gt;
+
+\* What must be true before the new configuration takes over.
+ReadyToActivate ==
+    CASE Mode = "Direct" -&gt; phase = "old"
+      [] Mode = "CopyOnly" -&gt; phase = "old" /\ Majority(copied, New)
+      [] Mode = "JointNoEvidence" -&gt; phase = "joint"
+      [] Mode \in {"Joint", "OldLingers"} -&gt;
+           /\ phase = "joint"
+           /\ \A v \in decided : Majority(Holding(v), New)
+
+Activate == /\ ReadyToActivate
+            /\ phase' = "new"
+            /\ UNCHANGED &lt;&lt;val, decided, copied&gt;&gt;
+
+Next == \/ \E n \in Nodes, v \in Values : Store(n, v)
+        \/ \E v \in Values : Decide(v)
+        \/ \E n \in New : Copy(n)
+        \/ EnterJoint \/ Activate
+Spec == Init /\ [][Next]_vars
+
+TypeOK == /\ phase \in {"old", "joint", "new"}
+          /\ val \in [Nodes -&gt; Values \cup {"none"}]
+          /\ decided \subseteq Values
+          /\ copied \subseteq New
+Agreement == Cardinality(decided) &lt;= 1
+================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANT Mode = "Joint"
+INVARIANT TypeOK
+INVARIANT Agreement
+CHECK_DEADLOCK FALSE</code></pre>
+<p><code>Agreement</code> is the global property: it spans configurations, rather than being checked inside each one. Each <code>Mode</code> removes one part of the handoff.</p>
+<div class="table-wrap"><table><thead><tr><th>Mode</th><th>What it does</th><th>TLC result</th></tr></thead><tbody>
+<tr><td><code>Direct</code></td><td>Switches with no copy and no joint phase</td><td>Violated, 8-state trace</td></tr>
+<tr><td><code>CopyOnly</code></td><td>Waits for a new majority to run the copy, while old quorums keep deciding</td><td>Violated, 10-state trace</td></tr>
+<tr><td><code>JointNoEvidence</code></td><td>Uses the joint phase, then activates without the evidence guard</td><td>Violated, 9-state trace</td></tr>
+<tr><td><code>OldLingers</code></td><td>Keeps every guard, but the old rule still counts after the phase changes</td><td>Violated, 9-state trace</td></tr>
+<tr><td><code>Joint</code></td><td>Stops old-only decisions, then requires the evidence guard</td><td>Passes: 6372 distinct states, 39293 generated</td></tr>
+</tbody></table></div>
+<!--fig:trace-->
+<p>Read the <code>Direct</code> grid by rows. X is decided while A and B hold it. Then the phase flips, and C and D, a majority of New that has never heard of X, decide Y.</p>
+<p>The other three failures each match a slogan you may have heard. <code>CopyOnly</code> is “wait until copying finishes”: in TLC’s trace, C runs the copy before anything is decided and keeps its Y, X is decided next, D copies X, and the switch goes ahead because two nodes have “copied.” C and E then decide Y. <code>JointNoEvidence</code> is “use joint consensus” with no statement of what the switch requires. <code>OldLingers</code> is “raise the epoch” while old servers still accept old-epoch work. Each is a real action, so TLC can refute it.</p>
+<p>Know the limits. The model has one decision, no crashes, and no delayed messages beyond what <code>OldLingers</code> stands for. A value that was stored but never acknowledged may be discarded. It is a study model of the handoff, not of any particular protocol.</p>
+<details class="answer"><summary>Exercise: why is “add one node at a time” not a full specification?</summary><p>It leaves unanswered when the change becomes authoritative, which voters count, how state is transferred, what a leader persists, and how concurrent or interrupted changes recover. A slogan can guide design; an action relation must define the handoff.</p></details>
+<div class="quiz" data-answer="0" data-explain="A node common to both memberships may be excluded from one of the chosen majorities, as C is from the old quorum in TLC's trace. The handoff protocol must preserve the safety argument across configurations."><fieldset><legend>Old and new memberships share one node. Must their chosen majorities intersect?</legend><label><input type="radio" name="q-reconfiguration" value="0">No</label><label><input type="radio" name="q-reconfiguration" value="1">Yes, always</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>Worked example: moving an inventory shard</h2>
+<p>A shopping service moves one stock record from {A,B,C} to {C,D,E}. All old replicas know there are three units. The new replicas are copied from an earlier snapshot. The team changes a routing configuration so that new clients use the new cluster, while some old clients keep cached routes.</p>
+<!--fig:shard-->
+<p>Follow the chart from the top: copy stock = 3 to D and E; A and B acknowledge r1 for one unit; routing switches; D and E acknowledge r2 for three units from their copy. This is <code>CopyOnly</code> in business terms. Read X as r1 and Y as r2: two acknowledgements that cannot both stand, because together they promise four units out of three. The old route was not merely inefficient. It kept decision authority during a handoff that lost evidence.</p>
+<p>Checking each cluster’s local stock misses this, so the property must be global: total acknowledged quantity never exceeds three. The evidence rule must connect to what future decisions actually read. It cannot mean that some isolated new node has the record. <code>Activate</code> asks for a <em>majority of New</em> because that is the set every later new quorum must intersect.</p>
+<p>A complete design says when the authoritative configuration changes, how that decision is persisted, how new authority learns all committed state, and where stale authority is rejected. Inject a crash between each pair of those steps as a next experiment. A client’s routing cache can affect availability and placement, but it must not decide whether an obsolete server may still commit.</p>
+<details class="answer"><summary>Transfer exercise: does reducing the DNS cache TTL solve the unsafe handoff?</summary><p>No. It shortens some clients’ stale-routing period but does not prove all stale requests disappear. Safety should follow from server-side authority and evidence rules even when an old route is used. A route refresh or redirect can then restore progress under the appropriate network assumptions.</p></details>
+<p class="resources">For one concrete protocol, study membership changes in the <a target="_blank" rel="noopener noreferrer" href="https://raft.github.io/raft.pdf">extended Raft paper</a> and compare them with its log and election rules.</p>

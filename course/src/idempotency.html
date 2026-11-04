@@ -1,0 +1,126 @@
+<h1>Make retrying safe across a crash.</h1>
+<p class="lead">A retry is only safe if the effect and the record of that effect cannot be separated by a crash.</p>
+<p>This builds on {{lesson:messages}}, where a client could not tell a lost request from a lost reply and so had to retry, and on {{lesson:inventory}}, where a check and an action in separate steps let another process slip between them. Now the thing that slips between them is a crash.</p>
+<p>Suppose a worker processes charge request r and records “seen r” so retries can return the earlier result. A <em>durable</em> value survives a crash; a <em>volatile</em> one does not. In each row of the diagram, the arrow labelled “crash, retry” starts from what is left on disk.</p>
+<!--fig:windows-->
+<p>In the top row the charge is on disk with no ID, so the retry charges again. In the middle row the ID is on disk with no charge, so the retry is told the work is done when it is not. Only the bottom row has no gap between the two writes. Step through the top and bottom rows here. This lab is an educational model, not TLC.</p>
+<div class="lab" id="retry-lab"><h2>Crash after the effect</h2><div class="controls"><label>Commit rule <select id="retry-mode"><option value="unsafe">Effect, then record ID</option><option value="safe">Atomically commit effect + ID</option></select></label><button id="retry-next" type="button">Next step</button><button id="retry-reset" type="button">Restart</button></div><div class="flow"><span class="node">Request r<small>original + retry</small></span><span class="arrow">→</span><span class="node">Durable store<small id="retry-store"></small></span></div><div id="retry-log" class="readout" aria-live="polite"></div></div>
+<h2>The contract</h2>
+<p>Start with what the system should appear to do, ignoring workers entirely. One atomic step records the request and applies its effect.</p>
+<pre><code>---------------- MODULE Once ----------------
+EXTENDS Naturals
+CONSTANT Requests
+VARIABLES seen, effects
+vars == &lt;&lt;seen,effects&gt;&gt;
+Init == /\ seen = {}
+        /\ effects = [r \in Requests |-&gt; 0]
+Apply(r) ==
+    /\ r \notin seen
+    /\ seen' = seen \cup {r}
+    /\ effects' = [effects EXCEPT ![r] = @ + 1]
+Next == \E r \in Requests: Apply(r)
+Spec == Init /\ [][Next]_vars
+TypeOK == /\ seen \subseteq Requests
+          /\ effects \in [Requests -&gt; 0..1]
+Consistent == \A r \in Requests:
+    (r \in seen) &lt;=&gt; (effects[r] = 1)
+=============================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANT Requests = {r1, r2}
+INVARIANT TypeOK
+INVARIANT Consistent
+CHECK_DEADLOCK FALSE</code></pre>
+<p>TLC finds 4 distinct states and 5 generated, with both invariants holding. Duplicate deliveries do not appear here: at this level a repeated request is a stuttering step.</p>
+<h2>A worker that can crash</h2>
+<p>Now the implementation. <code>effects</code> and <code>seen</code> are durable, so <code>Crash</code> leaves them alone and resets only the volatile <code>pc</code>. <code>Mode</code> selects a design. <code>Begin</code> also models a redelivery, because it can run again whenever the worker is idle. The last two lines use a refinement mapping from {{lesson:refinement}} to state that this worker should implement <code>Once</code>.</p>
+<pre><code>---------------- MODULE Worker ----------------
+EXTENDS Naturals
+CONSTANTS Workers, Mode
+ASSUME Mode \in {"EffectFirst", "IdFirst", "Atomic", "CheckThenCommit"}
+VARIABLES effects, seen,   \* durable: survive a crash
+          pc,              \* volatile: lost in a crash
+          replied          \* the client has been told "done"
+vars == &lt;&lt;effects, seen, pc, replied&gt;&gt;
+
+Init == /\ effects = 0
+        /\ seen = FALSE
+        /\ pc = [w \in Workers |-&gt; "idle"]
+        /\ replied = FALSE
+
+Go(w, where) == pc' = [pc EXCEPT ![w] = where]
+
+\* A delivery reads the durable ID, then starts the chosen design.
+Begin(w) ==
+    /\ pc[w] = "idle"
+    /\ UNCHANGED replied
+    /\ IF seen
+       THEN Go(w, "reply") /\ UNCHANGED &lt;&lt;effects, seen&gt;&gt;
+       ELSE CASE Mode = "EffectFirst" -&gt;
+                   effects' = effects + 1 /\ UNCHANGED seen /\ Go(w, "record")
+              [] Mode = "IdFirst" -&gt;
+                   seen' = TRUE /\ UNCHANGED effects /\ Go(w, "charge")
+              [] Mode = "Atomic" -&gt;
+                   effects' = effects + 1 /\ seen' = TRUE /\ Go(w, "reply")
+              [] Mode = "CheckThenCommit" -&gt;
+                   UNCHANGED &lt;&lt;effects, seen&gt;&gt; /\ Go(w, "commit")
+
+Record(w) == /\ pc[w] = "record" /\ seen' = TRUE
+             /\ UNCHANGED &lt;&lt;effects, replied&gt;&gt; /\ Go(w, "reply")
+Charge(w) == /\ pc[w] = "charge" /\ effects' = effects + 1
+             /\ UNCHANGED &lt;&lt;seen, replied&gt;&gt; /\ Go(w, "reply")
+Commit(w) == /\ pc[w] = "commit"
+             /\ effects' = effects + 1 /\ seen' = TRUE
+             /\ UNCHANGED replied /\ Go(w, "reply")
+Reply(w)  == /\ pc[w] = "reply" /\ replied' = TRUE
+             /\ UNCHANGED &lt;&lt;effects, seen&gt;&gt; /\ Go(w, "idle")
+Crash(w)  == /\ pc[w] # "idle"
+             /\ UNCHANGED &lt;&lt;effects, seen, replied&gt;&gt; /\ Go(w, "idle")
+
+Next == \E w \in Workers:
+    Begin(w) \/ Record(w) \/ Charge(w) \/ Commit(w) \/ Reply(w) \/ Crash(w)
+Spec == Init /\ [][Next]_vars
+
+AtMostOnce  == effects &lt;= 1
+ReplyHonest == replied =&gt; effects &gt;= 1
+Bound       == effects &lt;= 2     \* search limit for the buggy designs
+
+Contract == INSTANCE Once WITH Requests &lt;- {"r"},
+                seen &lt;- IF seen THEN {"r"} ELSE {},
+                effects &lt;- [r \in {"r"} |-&gt; effects]
+Refines == Contract!Spec
+================================================</code></pre>
+<p>The two invariants split the problem. <code>AtMostOnce</code> says no duplicate effect. <code>ReplyHonest</code> says the client is never told “done” for work that did not happen. Each is easy to satisfy alone, so check both. The configuration for the safe design:</p>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Workers = {w1}
+          Mode = "Atomic"
+INVARIANT AtMostOnce
+INVARIANT ReplyHonest
+PROPERTY Refines
+CONSTRAINT Bound
+CHECK_DEADLOCK FALSE</code></pre>
+<p><code>Bound</code> is a state constraint from {{lesson:scaling}}. It only keeps the buggy designs finite, since a crash loop could otherwise raise <code>effects</code> forever. Changing <code>Mode</code> and <code>Workers</code> gives these results:</p>
+<div class="table-wrap"><table><thead><tr><th>Mode</th><th>Workers</th><th>TLC result</th></tr></thead><tbody>
+<tr><td><code>EffectFirst</code></td><td>1</td><td><code>AtMostOnce</code> violated, 4-state trace</td></tr>
+<tr><td><code>IdFirst</code></td><td>1</td><td><code>ReplyHonest</code> violated, 5-state trace</td></tr>
+<tr><td><code>Atomic</code></td><td>1</td><td>Passes, including <code>Refines</code>: 5 distinct states, 8 generated</td></tr>
+<tr><td><code>CheckThenCommit</code></td><td>1</td><td>Passes the two invariants: 6 distinct states, 10 generated</td></tr>
+<tr><td><code>CheckThenCommit</code></td><td>2</td><td><code>AtMostOnce</code> violated, 5-state trace</td></tr>
+<tr><td><code>Atomic</code></td><td>2</td><td>Passes, including <code>Refines</code>: 9 distinct states, 27 generated</td></tr>
+</tbody></table></div>
+<p>Trace lengths in these lessons come from TLC with one worker (<code>-workers 1</code>), which searches breadth-first and so reports a shortest trace. With more workers you may get a different trace of the same violation.</p>
+<!--fig:bad-->
+<!--fig:good-->
+<p>Compare the two grids at the Crash column. It changes the same variable in both. The difference is what <code>seen</code> says afterwards. Checking <code>Refines</code> against <code>EffectFirst</code> also fails, at its very first step: <code>effects</code> changes while <code>seen</code> does not, and <code>Once</code> has no such step.</p>
+<details class="answer"><summary>Predict: is “record the ID, then charge” safe, since it can never charge twice?</summary><p>It is safe for <code>AtMostOnce</code>, and that is the trap. TLC’s trace for <code>IdFirst</code> is Begin, Crash, Begin, Reply: the ID is saved, the worker dies, the retry sees the ID and replies, and <code>effects</code> is still 0. You need both properties: no duplicate effect, and accepted work not silently lost.</p></details>
+<h2>A crash is not the only way in</h2>
+<p>The fourth row of the table is the instructive one. With one worker, <code>CheckThenCommit</code> passes, because its commit writes both values at once. Add a second worker and it fails with no crash at all. The diagram draws TLC’s trace.</p>
+<!--fig:race-->
+<p>Each worker’s commit is atomic, but the check came earlier, so this is the last-ticket race again. In a real store the fix is often a unique key on the request ID, so the second commit fails, or an equivalent compare-and-commit. Translate exactly that guarantee into your atomic boundary. The lesson for modeling: if the deployment has competing workers, a one-worker model can pass while the design is wrong.</p>
+<div class="quiz" data-answer="1" data-explain="In the module, the single-worker CheckThenCommit run passes while the two-worker run violates AtMostOnce. The atomic commit does not cover the earlier read."><fieldset><legend>Commit writes the effect and ID atomically, after an earlier read of the ID. What can still go wrong?</legend><label><input type="radio" name="q-idempotency" value="0">Nothing; atomic commit is enough</label><label><input type="radio" name="q-idempotency" value="1">Two workers can both read “unseen” and both commit</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>Worked architecture: process an uploaded receipt once</h2>
+<p>A receipt-scanning service awards loyalty points after processing an image. Job r42 may be delivered twice. Define the business effect as a durable credit row keyed by r42, and define attempts as separate worker executions. “Exactly once” at the application boundary concerns the credit, not whether a worker ever repeats the computation.</p>
+<!--fig:receipt-->
+<p>In the diagram, a crash between OCR and the commit would lose only temporary work. The crash shown comes after the commit, so the acknowledgement is lost and the queue redelivers along the dashed arrow. The worker then finds a saved answer.</p>
+<p>That is why the store keeps a result, not just a flag. A bare <code>seen</code> boolean can suppress a duplicate, but it cannot reconstruct the points awarded. Define a retention policy too: deleting r42’s record while late attempts remain possible reopens the duplicate path.</p>
+<p>If the effect sits at an external payment provider, a local transaction cannot include it. The provider needs compatible request-ID semantics, or you need a different protocol. A <em>transactional outbox</em> commits a local data change together with an intent to publish an event, which makes those two atomic. Downstream consumers still need their own duplicate handling.</p>
+<details class="answer"><summary>Predict: the points credit is committed locally, but an email is sent before the transaction completes. Is the whole operation atomic?</summary><p>No. The email is an external side effect. An outbox can durably record the intention to send alongside the credit, but delivery may repeat unless the email boundary has its own identity or repetition is acceptable. Specify each observable effect separately.</p></details>

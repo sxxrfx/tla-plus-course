@@ -1,0 +1,11 @@
+import sys,os; sys.path.insert(0,os.path.join(os.path.dirname(__file__),".."))
+from dg import graph,sequence,lanes,regions
+pn={"a":(100,40,"i = 17\npc = \"start\""),"b":(470,40,"i' = 534\npc' = \"middle\"","good"),"c":(100,130,"i = 534\npc = \"middle\""),"d":(470,130,"i' = 77\npc' = \"done\"","bad")}
+pairs=graph(pn,[("a","b","formula is TRUE",{"tone":"good","ly":-14}),("c","d","formula is FALSE",{"tone":"bad","dash":True,"ly":-14})],"Two pairs of states. The next-state formula is true for i 17 start to i 534 middle, and false for i 534 middle to i 77 done because 77 is not 535.",width=600,height=176,mono=True)
+tn={"q":(110,60,"pc = \"start\"?","accent"),"t":(400,60,"(i' \\in 0..1000) /\\\n(pc' = \"middle\")","good"),"q2":(110,170,"pc = \"middle\"?","accent"),"t2":(400,170,"(i' = i + 1) /\\\n(pc' = \"done\")","good"),"f":(110,270,"FALSE","bad")}
+tree=graph(tn,[("q","t","true: value is this",{"ly":-14}),("q","q2","false",{"lx":24}),("q2","t2","true: value is this",{"ly":-14}),("q2","f","false",{"lx":24})],"The IF formula as a decision tree: if pc is start the value is the first then-formula; otherwise if pc is middle the value is the second; otherwise FALSE.",width=620,height=312,mono=True)
+fn={"s":(70,36,"i: 0\npc: start","accent"),"s1":(340,36,"1001 next states\ni' is any of 0..1000","good"),"m":(70,116,"i: 42\npc: middle","accent"),"m1":(340,116,"exactly 1 next state\ni' = 43","good"),"d":(70,196,"i: 43\npc: done","accent"),"d1":(340,196,"0 next states\nformula is FALSE","bad")}
+fan=graph(fn,[("s","s1","many",{"ly":-14}),("m","m1","one",{"ly":-14}),("d","d1","halt",{"dash":True,"tone":"bad","ly":-14})],"How many next states the formula allows from each kind of state: 1001 from start, exactly one from middle, none from done.",width=480,height=240,mono=False)
+FIGS={"pairs":(pairs,"The formula is not run; it is evaluated on a pair of states. Green: 534 is in the set and pc' is right. Red: pc' is fine, but 77 is not 534 + 1."),
+"tree":(tree,"How the IF formula gets its value. Nothing happens at any branch: the tree only picks which sub-formula's truth value the whole formula takes."),
+"fanout":(fan,"The same formula allows different numbers of next states. Nondeterminism is a set with many elements, and halting is a formula with no true pairs.")}

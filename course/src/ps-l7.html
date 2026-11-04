@@ -1,0 +1,321 @@
+<h1>Problem set 7: count on the overlap.</h1>
+<p class="lead">Four problems on quorums, consensus and Paxos Commit. You'll use the set operators and the overlap property from lecture 7 to find a stale read and to choose where cluster members live. Then you'll break a leader election by losing one field in a restart, and compare Paxos Commit with the two-phase commit booking from {{ref:ps-l6}}. Every problem ends in a TLC run.</p>
+<p>Each module below is complete and was checked with TLC exactly as shown. Type it in yourself or copy it into a file of the same name. Counts like "distinct states" only match if your module is identical, so use those numbers to test your copy.</p>
+
+<article class="problem" id="ps-l7-stale-read">
+<p class="problem-meta"><span>Problem 1</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">Databases</span></p>
+<h2>Find the stale read in a Dynamo-style store</h2>
+<p class="uses">Draws on {{ref:replication}}, {{ref:paxos-commit}} and {{ref:counter}}.</p>
+<p>A shopping-cart service keeps each cart in a key-value store built on the design of Amazon's Dynamo paper. Every key lives on N replicas. A write counts as successful once W replicas have stored it, and a read asks R replicas and returns the newest version it hears. The team runs N = 5 with W = 3. To cut read latency, someone proposes R = 2: "three of the five replicas have every acknowledged write, so asking two will nearly always find one." Customers then report carts that lose the item they just added.</p>
+<p>The module models one key. Every replica starts at version 1, a client writes version 2, and once the write is acknowledged a single read happens. <code>Maximum</code> is the definition from Paxos Commit.</p>
+<pre><code>---------------------------- MODULE PSl7_Quorum -----------------------------
+\* One key of a Dynamo-style store with replication factor N = |Replica|.
+\* Every replica holds version 1. A client writes version 2: the coordinator
+\* stores it replica by replica and reports success once W replicas have it.
+\* A later read asks R replicas and returns the highest version it hears.
+EXTENDS Integers, FiniteSets
+CONSTANTS Replica, W, R
+VARIABLES version,   \* version[n]: the version replica n stores
+          acked,     \* the coordinator has told the client "write succeeded"
+          seen       \* what the read returned (0 = no read yet)
+vars == &lt;&lt;version, acked, seen&gt;&gt;
+
+Maximum(S) == IF S = {} THEN -1
+                        ELSE CHOOSE n \in S : \A m \in S : n &gt;= m
+WriteSets == {Q \in SUBSET Replica : Cardinality(Q) = W}
+ReadSets  == {Q \in SUBSET Replica : Cardinality(Q) = R}
+
+Init == /\ version = [n \in Replica |-&gt; 1]
+        /\ acked = FALSE
+        /\ seen = 0
+
+Store(n) == /\ version[n] = 1
+            /\ version' = [version EXCEPT ![n] = 2]
+            /\ UNCHANGED &lt;&lt;acked, seen&gt;&gt;
+
+Ack == /\ ~acked
+       /\ \E Q \in WriteSets : \A n \in Q : version[n] = 2
+       /\ acked' = TRUE
+       /\ UNCHANGED &lt;&lt;version, seen&gt;&gt;
+
+Read == /\ acked
+        /\ seen = 0
+        /\ \E Q \in ReadSets : seen' = Maximum({version[n] : n \in Q})
+        /\ UNCHANGED &lt;&lt;version, acked&gt;&gt;
+
+Next == Ack \/ Read \/ \E n \in Replica : Store(n)
+
+ReadsLatest == seen \in {0, 2}
+Overlap == \A Wq \in WriteSets, Rq \in ReadSets : Wq \cap Rq # {}
+=============================================================================</code></pre>
+<pre><code>INIT Init
+NEXT Next
+CONSTANTS Replica = {"A", "B", "C", "D", "E"}
+          W = 3
+          R = 2
+INVARIANT ReadsLatest
+CHECK_DEADLOCK FALSE</code></pre>
+<ol class="tasks">
+<li>Before running anything, use the R + W &gt; N rule to say which values of R from 1 to 5 make every read set meet every write set.</li>
+<li>Run TLC with R = 1, R = 2 and R = 3. For each, report whether <code>ReadsLatest</code> holds, and for failures, the length of the trace and which replicas the read asked.</li>
+<li>Add the line <code>ASSUME Overlap</code> after the definition of <code>Overlap</code>, and run it with R = 2 and with R = 3. What changes in TLC's output, and why does it appear before any state is explored?</li>
+<li>Say in one sentence why <code>Read</code> takes the maximum of the versions it hears instead of the version of whichever replica answers first.</li>
+</ol>
+<div class="numcheck" data-answer="6|six" data-explain="Three Store steps, the Ack, and the Read: five steps after the initial state, so 6 states. TLC searches breadth first, so no shorter violating behavior exists." data-retry="Count the initial state too. How many Store steps does Ack need with W = 3?"><label>Number of states in TLC's trace for R = 2 <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="TLC finds a violation: with ReadAny the read can ask {A, B, C} and keep B's version 1. The overlap guarantees that some replica in the read set has version 2. It doesn't make the read use that replica. You need a rule for choosing among the answers, and Maximum is that rule."><fieldset><legend>Keep R = 3, but change the read to <code>\E n \in Q : seen' = version[n]</code>: it returns the version of any one replica it asked. Does <code>ReadsLatest</code> still hold?</legend><label><input type="radio" name="q-ps-l7-stale-read" value="0">Yes, because every read set meets every write set</label><label><input type="radio" name="q-ps-l7-stale-read" value="1">No, the read may pick a replica outside the overlap</label><label><input type="radio" name="q-ps-l7-stale-read" value="2">TLC can't tell, since R = 3 has too many read sets</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>A read set of size R and a write set of size W must share an element when R + W elements can't fit into N places without repeating one. For task 3, remember that a constant formula doesn't depend on any state.</p></details>
+<details class="answer solution"><summary>Solution</summary><p><strong>1.</strong> R + W &gt; N means R + 3 &gt; 5, so R ≥ 3. R = 3, 4 and 5 force overlap; R = 1 and R = 2 don't. With R = 2 the write set {A, C, D} and the read set {B, E} are disjoint.</p>
+<p><strong>2.</strong> R = 1 and R = 2 both violate <code>ReadsLatest</code> with a 6-state trace. In the R = 2 run, the trace went <code>Store("A")</code>, <code>Store("C")</code>, <code>Store("D")</code>, <code>Ack</code>, <code>Read</code>, ending with <code>seen = 1</code>. The read set must have been {B, E}, the only pair whose maximum is 1 there, as the diagram shows. Your run may store a different three replicas first. R = 3 gives no error, with 64 distinct states. That count is easy to check by hand: 32 version maps before the ack, then for each of the 16 maps with at least three 2s, one state before the read and one after it, which returns 2.</p>
+<!--fig:quorum-->
+<p><strong>3.</strong> With R = 2 TLC stops at once with "Assumption … is false" and explores no states. With R = 3 the assumption holds, and the run is the same as before. <code>Overlap</code> mentions no variable, so it is a constant formula, and TLC evaluates assumptions before it computes the initial states. That's why Paxos Commit puts its <code>Majority</code> condition in an <code>ASSUME</code>: a bad configuration is rejected before any behavior is checked.</p>
+<p><strong>4.</strong> The overlap only promises that some replica asked has version 2. The read has to recognize that replica among its answers, and taking the highest version is how it does that. The quiz shows the same read with no such rule failing at R = 3. Real stores also need versions that order concurrent writes, which this one-writer model avoids.</p>
+<p>The team's "nearly always" was correct as a probability and wrong as a guarantee. TLC doesn't weigh how likely a behavior is: it reports the one bad read that is allowed.</p></details>
+</article>
+
+<article class="problem" id="ps-l7-placement">
+<p class="problem-meta"><span>Problem 2</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">Infrastructure</span></p>
+<h2>Place five cluster members across data centres</h2>
+<p class="uses">Draws on {{ref:replication}}, {{ref:consensus}} and {{ref:sets}}.</p>
+<p>Your company's configuration store is a five-member cluster that uses Raft, like etcd. A write needs a quorum of three members. The cluster must keep accepting writes when a whole data centre (DC) goes dark. The infrastructure team has three proposals:</p>
+<ul>
+<li>Two DCs, three members in one and two in the other.</li>
+<li>Three DCs, with two, two and one members.</li>
+<li>Save a machine: four members in two DCs, two in each, with a quorum of just two "so either DC can carry on alone."</li>
+</ul>
+<p>In the module below <code>DCs</code> is a set of sets: each element is the set of members in one DC. The single variable <code>lost</code> is the DC that has gone dark, and <code>Init</code> lets TLC try every choice. Because <code>Next</code> changes nothing, each state is one "what if". The cfg shows the first proposal.</p>
+<pre><code>--------------------------- MODULE PSl7_Placement ---------------------------
+\* Where to put the members of a quorum-based cluster. DCs is a set of sets:
+\* each element is the set of nodes in one data centre. The variable lost is
+\* the one data centre that has gone dark; Init lets TLC try each in turn.
+EXTENDS Integers, FiniteSets
+CONSTANTS Node, DCs, QSize
+ASSUME \A d1, d2 \in DCs : d1 # d2 =&gt; d1 \cap d2 = {}   \* no node in two DCs
+ASSUME \A n \in Node : \E d \in DCs : n \in d           \* every node placed
+VARIABLE lost
+Quorum == {Q \in SUBSET Node : Cardinality(Q) &gt;= QSize}
+\* The property Paxos and Raft rely on, checked before any state is explored.
+QuorumsOverlap == \A Q1, Q2 \in Quorum : Q1 \cap Q2 # {}
+ASSUME QuorumsOverlap
+
+Init == lost \in DCs
+Next == UNCHANGED lost
+
+\* Some quorum is made only of nodes outside the lost data centre.
+QuorumSurvives == \E Q \in Quorum : Q \cap lost = {}
+=============================================================================</code></pre>
+<pre><code>INIT Init
+NEXT Next
+CONSTANTS Node = {"n1", "n2", "n3", "n4", "n5"}
+          DCs = &#123;{"n1", "n2", "n3"}, {"n4", "n5"}}
+          QSize = 3
+INVARIANT QuorumSurvives
+CHECK_DEADLOCK FALSE</code></pre>
+<ol class="tasks">
+<li>By hand: how many elements does <code>Quorum</code> have for five members with <code>QSize = 3</code>? Check your count by adding <code>ASSUME Cardinality(Quorum) = n</code>, with your n, at the end of the module: TLC rejects a false assumption before it explores anything.</li>
+<li>Run all three proposals (for the third, use four members and <code>QSize = 2</code>, then <code>QSize = 3</code>). For each run, write down what TLC reports and which DC, if any, is fatal to lose.</li>
+<li>The third proposal can't be fixed by choosing a quorum size. Explain why in terms of the two properties the module checks.</li>
+<li>Find a layout of six members in three DCs, and a <code>QSize</code>, that passes both checks. Run it.</li>
+</ol>
+<div class="numcheck" data-answer="16|sixteen" data-explain="Subsets of five members with at least three: 10 of size 3, 5 of size 4, and 1 of size 5. TLC accepts ASSUME Cardinality(Quorum) = 16 and rejects any other number." data-retry="Count the subsets of size 3, 4 and 5 separately."><label>Number of quorums for five members and <code>QSize = 3</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="0" data-explain="Losing any two DCs of 2, 2 and 1 leaves at most two members, fewer than a quorum of three. Spreading members out buys tolerance of one DC loss, not two."><fieldset><legend>With the 2 + 2 + 1 layout and quorum 3, how many DCs can be lost at the same time without stopping writes?</legend><label><input type="radio" name="q-ps-l7-placement" value="0">One</label><label><input type="radio" name="q-ps-l7-placement" value="1">Two, as long as the one-member DC survives</label><label><input type="radio" name="q-ps-l7-placement" value="2">Any number, since quorums overlap</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p><code>QuorumSurvives</code> asks for a quorum disjoint from the lost DC. <code>QuorumsOverlap</code> asks every two quorums to share a member. A quorum that fits inside one DC of the 2 + 2 layout satisfies the first and is exactly what breaks the second.</p></details>
+<details class="answer solution"><summary>Solution</summary><p><strong>1.</strong> 10 + 5 + 1 = 16. With <code>ASSUME Cardinality(Quorum) = 16</code> TLC runs as before; with 15 it reports the assumption false.</p>
+<p><strong>2.</strong> Results of the runs:</p>
+<div class="table-wrap"><table><thead><tr><th>Layout</th><th><code>QSize</code></th><th>TLC says</th></tr></thead><tbody>
+<tr><td>3 + 2</td><td>3</td><td><code>QuorumSurvives</code> violated by the initial state <code>lost = {"n1", "n2", "n3"}</code></td></tr>
+<tr><td>2 + 2 + 1</td><td>3</td><td>No error, 3 distinct states</td></tr>
+<tr><td>2 + 2</td><td>2</td><td>Assumption <code>QuorumsOverlap</code> is false</td></tr>
+<tr><td>2 + 2</td><td>3</td><td><code>QuorumSurvives</code> violated by <code>lost = {"n1", "n2"}</code></td></tr>
+<tr><td>2 + 2 + 2</td><td>4</td><td>No error, 3 distinct states (22 quorums)</td></tr>
+</tbody></table></div>
+<!--fig:dcs-->
+<p>In the 3 + 2 layout, losing the small DC is fine, but losing the large one leaves two members. The diagram shows both.</p>
+<p><strong>3.</strong> If either DC alone must be able to write, a quorum has to fit inside each DC. But then {n1, n2} and {n3, n4} are both quorums and share nobody: during a network split, each side could elect its own leader, which is the property Paxos and Raft assume can't happen. If quorums must overlap, a quorum needs at least three of the four members, and neither DC has three. With two DCs of equal size you can't have both properties, whatever <code>QSize</code> you choose.</p>
+<p><strong>4.</strong> Three DCs of two members each with <code>QSize = 4</code>: two quorums of four out of six share at least two members, and losing any DC leaves exactly four. TLC reports no error. Notice that a fourth member and a third DC improve nothing by themselves. What matters is that no single DC holds more than N − <code>QSize</code> members, the number a quorum system can do without.</p></details>
+</article>
+
+<article class="problem" id="ps-l7-election">
+<p class="problem-meta"><span>Problem 3</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Algorithms</span></p>
+<h2>Two leaders in one term</h2>
+<p class="uses">Draws on {{ref:consensus}}, {{ref:replication}}, {{ref:messages}} and {{ref:transactions}}.</p>
+<p>A team is writing its own Raft-style leader election for a job scheduler. A server that hears nothing from a leader times out, moves to a higher term, votes for itself, and asks the others for votes. A server grants at most one vote per term. A candidate that collects votes from a majority becomes leader of that term. As in {{ref:consensus}}, a term plays the role of a ballot.</p>
+<p>To keep the hot path fast, the implementation writes <code>term</code> to disk but keeps <code>votedFor</code> only in memory. After a deploy, the logs show two servers both acting as leader of term 1, both accepting jobs.</p>
+<p>The module records votes as messages in a set that only grows, as in two-phase commit, and keeps the history <code>leaders</code> so that an invariant can talk about every election ever won. Logs are left out, so this checks only the election.</p>
+<pre><code>--------------------------- MODULE PSl7_Election ----------------------------
+\* Leader election in the style of Raft, with votes as messages. Logs are
+\* left out. A server that times out moves to a higher term, votes for
+\* itself and asks for votes; it is leader of a term once a majority voted
+\* for it in that term. Restart models a crash and reboot.
+EXTENDS Integers
+CONSTANTS Server, Majority, Term
+ASSUME \A MS1, MS2 \in Majority : MS1 \cap MS2 # {}
+None == "none"
+VARIABLES term,      \* term[s]: the highest term s has seen
+          votedFor,  \* votedFor[s]: whom s voted for in term[s], or None
+          msgs,      \* every message ever sent
+          leaders    \* every [srv, term] pair that has won an election
+vars == &lt;&lt;term, votedFor, msgs, leaders&gt;&gt;
+
+Init == /\ term = [s \in Server |-&gt; 0]
+        /\ votedFor = [s \in Server |-&gt; None]
+        /\ msgs = {}
+        /\ leaders = {}
+
+Timeout(s, t) ==
+  /\ t &gt; term[s]
+  /\ term' = [term EXCEPT ![s] = t]
+  /\ votedFor' = [votedFor EXCEPT ![s] = s]
+  /\ msgs' = msgs \cup {[type |-&gt; "request", term |-&gt; t, from |-&gt; s],
+                        [type |-&gt; "vote", term |-&gt; t, from |-&gt; s, to |-&gt; s]}
+  /\ UNCHANGED leaders
+
+\* s grants its vote for term m.term at most once, unless it forgot.
+Grant(s) ==
+  \E m \in msgs :
+    /\ m.type = "request"
+    /\ \/ m.term &gt; term[s]
+       \/ m.term = term[s] /\ votedFor[s] \in {None, m.from}
+    /\ term' = [term EXCEPT ![s] = m.term]
+    /\ votedFor' = [votedFor EXCEPT ![s] = m.from]
+    /\ msgs' = msgs \cup {[type |-&gt; "vote", term |-&gt; m.term, from |-&gt; s, to |-&gt; m.from]}
+    /\ UNCHANGED leaders
+
+BecomeLeader(s) ==
+  /\ \E MS \in Majority :
+       \A v \in MS : [type |-&gt; "vote", term |-&gt; term[s], from |-&gt; v, to |-&gt; s] \in msgs
+  /\ leaders' = leaders \cup {[srv |-&gt; s, term |-&gt; term[s]]}
+  /\ UNCHANGED &lt;&lt;term, votedFor, msgs&gt;&gt;
+
+\* The process restarts. term is on disk; votedFor was kept only in memory.
+Restart(s) ==
+  /\ votedFor' = [votedFor EXCEPT ![s] = None]
+  /\ UNCHANGED &lt;&lt;term, msgs, leaders&gt;&gt;
+
+Next == \E s \in Server : \/ \E t \in Term : Timeout(s, t)
+                          \/ Grant(s) \/ BecomeLeader(s) \/ Restart(s)
+\* Both fields on disk: a restart then changes nothing in this model.
+NextDurable == \E s \in Server : \/ \E t \in Term : Timeout(s, t)
+                                 \/ Grant(s) \/ BecomeLeader(s)
+
+OneLeaderPerTerm == \A l1, l2 \in leaders : l1.term = l2.term =&gt; l1.srv = l2.srv
+=============================================================================</code></pre>
+<pre><code>INIT Init
+NEXT Next
+CONSTANTS Server = {"s1", "s2", "s3"}
+          Majority = &#123;{"s1", "s2"}, {"s1", "s3"}, {"s2", "s3"}}
+          Term = {1, 2}
+INVARIANT OneLeaderPerTerm
+CHECK_DEADLOCK FALSE</code></pre>
+<ol class="tasks">
+<li>Without TLC: suppose two different servers won term t. Use the <code>ASSUME</code> to show that some server sent a vote for each of them in term t. What in <code>Grant</code> is supposed to prevent that?</li>
+<li>Run TLC with <code>Next</code>. Report the length of the trace and the server whose two votes in term 1 let both candidates win.</li>
+<li>Run it again with <code>NEXT NextDurable</code>, which models keeping both fields on disk. Report TLC's result.</li>
+<li>Would keeping <code>votedFor</code> on disk and forgetting <code>term</code> on restart be safe? Decide by reading <code>Grant</code>, then answer the quiz.</li>
+</ol>
+<div class="numcheck" data-answer="8|eight" data-explain="Seven steps: s1 times out and votes for itself, restarts, s2 times out, s1 grants s2 its vote, s2 wins, s3 votes for s1, s1 wins using its own old vote." data-retry="Count the initial state. Both elections need a majority of two votes in term 1."><label>Number of states in TLC's trace with <code>Next</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="2" data-explain="If term resets to 0, a request for term 1 satisfies m.term &gt; term[s], so Grant ignores votedFor and votes again in term 1. A hidden run of this variant finds two leaders in term 1, again in 8 states. Raft's paper lists currentTerm and votedFor (and the log) as state that must be on stable storage."><fieldset><legend>Restart keeps <code>votedFor</code> but resets <code>term</code> to 0. Is <code>OneLeaderPerTerm</code> safe?</legend><label><input type="radio" name="q-ps-l7-election" value="0">Yes: the vote is remembered, which is all that matters</label><label><input type="radio" name="q-ps-l7-election" value="1">Yes, because terms only increase in Timeout</label><label><input type="radio" name="q-ps-l7-election" value="2">No: with term at 0, a term-1 request looks newer, and Grant votes again</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Two winners in term t means two sets of vote messages, each from a set in <code>Majority</code>. Any two such sets share a server. That server sent two votes in term t to different candidates. Look for the step after which <code>Grant</code>'s guard no longer remembers the first one.</p></details>
+<details class="answer solution"><summary>Solution</summary><p><strong>1.</strong> If s and s' both won term t, there are majorities MS and MS' whose members all sent term-t votes to s and to s' respectively. The <code>ASSUME</code> says MS ∩ MS' contains some server v, so v voted for both. In term <code>term[v] = t</code>, <code>Grant</code> allows a vote only when <code>votedFor[v]</code> is <code>None</code> or the same candidate. So two votes in one term can happen only if <code>votedFor[v]</code> went back to <code>None</code> while <code>term[v]</code> stayed t. <code>Restart</code> does exactly that.</p>
+<p><strong>2.</strong> TLC reports <code>OneLeaderPerTerm</code> violated after 8 states. The run here printed:</p>
+<!--fig:election-->
+<pre><code>State 2: &lt;Timeout("s1",1)&gt;    \* s1 votes for itself in term 1
+State 3: &lt;Restart("s1")&gt;      \* votedFor["s1"] = "none", term["s1"] = 1
+State 4: &lt;Timeout("s2",1)&gt;    \* s2 votes for itself in term 1
+State 5: &lt;Grant("s1")&gt;        \* s1 votes for s2 in term 1
+State 6: &lt;BecomeLeader("s2")&gt; \* leaders = {[term |-&gt; 1, srv |-&gt; "s2"]}
+State 7: &lt;Grant("s3")&gt;        \* s3 votes for s1 in term 1
+State 8: &lt;BecomeLeader("s1")&gt; \* leaders = {[term |-&gt; 1, srv |-&gt; "s1"],
+                               \*            [term |-&gt; 1, srv |-&gt; "s2"]}</code></pre>
+<p>The server that voted twice is s1. Its first vote was for itself, sent in state 2 and still in <code>msgs</code>. In your run the servers may be named differently, but the shape is the same: the double voter sits in the overlap of the two majorities. The overlap was there all along. What failed is that the server in it forgot what it had said, which is the restart warning from {{ref:consensus}} in another form.</p>
+<p><strong>3.</strong> No error: 1444 distinct states. The overlap argument from task 1 now goes through.</p>
+<p><strong>4.</strong> No. A server whose <code>term</code> drops to 0 treats any term-1 request as newer, and the first disjunct of <code>Grant</code> lets it vote without looking at <code>votedFor</code>. A vote record means something only together with the term it belongs to. That's why Raft requires both to reach stable storage before a server answers a vote request.</p></details>
+</article>
+
+<article class="problem" id="ps-l7-paxos-booking">
+<p class="problem-meta"><span>Problem 4</span><span class="level" title="Difficulty 3 of 3">●●●</span><span class="domain">Databases</span></p>
+<h2>Synthesis: book the trip with Paxos Commit</h2>
+<p class="uses">Draws on {{ref:paxos-commit}}, {{ref:transactions}}, {{ref:tcommit}} and {{ref:ps-l6}}.</p>
+<p>Return to the travel booking of {{ref:ps-l6}}: one transaction reserves a flight, a hotel room and a rental car, each held by its own resource manager (RM), coordinated with two-phase commit. Last month the coordinator's machine died after all three RMs had prepared. Each RM held its reservation and waited. Nobody could release the seat without risking a car booked for a trip with no flight. An engineer proposes Paxos Commit with three acceptors. Your job is to state precisely which failures each protocol survives, with a TLC run for each claim.</p>
+<p>The first module is <code>TwoPhase</code> with RM = {flight, hotel, car} plus a crash: after <code>Crash</code> the TM never takes another step.</p>
+<pre><code>-------------------------- MODULE PSl7_TwoPCBooking -------------------------
+\* Two-phase commit for the booking, plus a coordinator crash: after Crash
+\* the TM takes no step ever again. RMs are unchanged from TwoPhase.
+EXTENDS TwoPhase
+VARIABLE tmUp
+CInit == TPInit /\ tmUp = TRUE
+Crash == /\ tmUp
+         /\ tmUp' = FALSE
+         /\ UNCHANGED vars
+CNext == \/ Crash
+         \/ /\ tmUp
+            /\ \/ TMCommit \/ TMAbort
+               \/ \E r \in RM : TMRcvPrepared(r)
+            /\ UNCHANGED tmUp
+         \/ /\ \E r \in RM : \/ RMPrepare(r) \/ RMChooseToAbort(r)
+                             \/ RMRcvCommitMsg(r) \/ RMRcvAbortMsg(r)
+            /\ UNCHANGED tmUp
+NeverDecided == [type |-&gt; "Commit"] \notin msgs /\ [type |-&gt; "Abort"] \notin msgs
+\* Everyone has voted yes and nobody can ever learn the outcome.
+InDoubt == ~tmUp /\ NeverDecided /\ \A r \in RM : rmState[r] = "prepared"
+NotInDoubt == ~InDoubt
+=============================================================================</code></pre>
+<pre><code>INIT CInit
+NEXT CNext
+CONSTANT RM = {"flight", "hotel", "car"}
+INVARIANT TCConsistent
+INVARIANT NotInDoubt
+CHECK_DEADLOCK FALSE</code></pre>
+<p>The second module extends <code>PaxosCommit</code>, unchanged from the lecture. Only acceptors in <code>Up</code> take steps. Both claims at the bottom should <em>fail</em> when the protocol can still make progress: a counterexample to <code>NeverAllCommitted</code> is a run that commits the trip.</p>
+<pre><code>------------------------- MODULE PSl7_PaxosBooking --------------------------
+\* Paxos Commit for the booking, with some acceptors crashed for good.
+\* Only acceptors in Up ever take a step; the others stay silent forever.
+\* Leader actions need no "up" flag: any live process may act as leader.
+EXTENDS PaxosCommit
+CONSTANT Up
+ASSUME Up \subseteq Acceptor
+
+UpNext ==
+  \/ \E r \in RM : \/ RMPrepare(r) \/ RMChooseToAbort(r)
+                   \/ RMRcvCommitMsg(r) \/ RMRcvAbortMsg(r)
+  \/ \E bal \in Ballot \ {0}, r \in RM : Phase1a(bal, r) \/ Phase2a(bal, r)
+  \/ PCDecide
+  \/ \E acc \in Up : Phase1b(acc) \/ Phase2b(acc)
+
+\* Claims that FAIL exactly when the protocol can still make progress:
+NeverAllCommitted == \E r \in RM : rmState[r] # "committed"
+NeverDecided == [type |-&gt; "Commit"] \notin msgs /\ [type |-&gt; "Abort"] \notin msgs
+=============================================================================</code></pre>
+<pre><code>INIT PCInit
+NEXT UpNext
+CONSTANTS RM = {"flight", "hotel", "car"}
+          Acceptor = {"a1", "a2", "a3"}
+          Majority = &#123;{"a1", "a2"}, {"a1", "a3"}, {"a2", "a3"}}
+          Ballot = {0, 1}
+          Up = {"a1", "a2"}
+INVARIANT TCConsistent
+INVARIANT NeverAllCommitted
+CHECK_DEADLOCK FALSE</code></pre>
+<ol class="tasks">
+<li>Run <code>PSl7_TwoPCBooking</code>. Using the guards of <code>TwoPhase</code>, explain why no step can change <code>rmState</code> once <code>InDoubt</code> holds.</li>
+<li>Run <code>PSl7_PaxosBooking</code> as shown, with a3 crashed. Does the trip commit? Which acceptors' phase 2b messages does <code>PCDecide</code> rely on?</li>
+<li>Now crash two acceptors: <code>Up = {"a1"}</code>, with <code>INVARIANT NeverDecided</code> instead of <code>NeverAllCommitted</code>. What does TLC report, and what does it mean?</li>
+<li>Run Paxos Commit with a single acceptor: <code>Acceptor = {"tm"}</code>, <code>Majority = &#123;{"tm"}}</code>, and <code>Up = {}</code>, checking <code>NeverDecided</code>. Compare it with task 1.</li>
+<li>Fill in the table: for each failure, does two-phase commit, and does Paxos Commit with three acceptors, still reach a decision? The failures are: an RM crashes before voting, the TM crashes before deciding, one acceptor crashes, two acceptors crash.</li>
+</ol>
+<div class="numcheck" data-answer="5|five" data-explain="To keep working with F acceptors crashed, the live ones must still contain a majority: N − F &gt; N/2, so N ≥ 2F + 1 = 5." data-retry="The acceptors still up must contain a whole majority."><label>Smallest number of acceptors that lets Paxos Commit decide with two acceptors crashed <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="Safety never depended on anyone being up: TCConsistent held in every run, including the blocked ones. What crashes take away is progress, and Paxos Commit moves the point where progress stops from one TM to a majority of acceptors."><fieldset><legend>In every run of this problem, <code>TCConsistent</code> held. What do the crashes cost?</legend><label><input type="radio" name="q-ps-l7-paxos-booking" value="0">Consistency, in two-phase commit only</label><label><input type="radio" name="q-ps-l7-paxos-booking" value="1">Only progress: a decision may never be reached</label><label><input type="radio" name="q-ps-l7-paxos-booking" value="2">Nothing, since the model has no timeouts</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>For task 1, list every action and the first conjunct that is false in the <code>InDoubt</code> state. For task 2, <code>Decided(r, v)</code> in <code>PCDecide</code> needs phase 2b messages from every acceptor of one set in <code>Majority</code>, and only one of those sets avoids a3.</p></details>
+<details class="answer solution"><summary>Solution</summary><p><strong>1.</strong> TLC reports <code>NotInDoubt</code> violated after 5 states: the TM crashes, then flight, hotel and car prepare (your trace may crash the TM later). In that state the TM actions are disabled by <code>tmUp = FALSE</code>. <code>RMPrepare</code> and <code>RMChooseToAbort</code> need <code>"working"</code>. <code>RMRcvCommitMsg</code> and <code>RMRcvAbortMsg</code> need a decision message, and only the TM sends those. <code>Crash</code> isn't enabled either, and it never touches <code>rmState</code> anyway. All three reservations stay held forever.</p>
+<!--fig:compare-->
+<p><strong>2.</strong> Yes. TLC reports <code>NeverAllCommitted</code> violated with a 14-state trace: the three <code>RMPrepare</code> steps, three <code>Phase2b("a1")</code> steps, three <code>Phase2b("a2")</code> steps, <code>PCDecide</code>, and three <code>RMRcvCommitMsg</code> steps. <code>PCDecide</code> uses the majority {a1, a2} for all three instances. a3 never did anything, and nobody had to notice that it was gone. (Even this run explores more than 170,000 distinct states before it stops, which is why the lecture's model has two RMs.)</p>
+<p><strong>3.</strong> No error, 3375 distinct states: with a1 alone, no Commit or Abort is ever sent. No majority can form, so no instance can choose a value, and leaders' ballots can't complete either. Paxos Commit blocks too, but only when a majority of acceptors is gone.</p>
+<p><strong>4.</strong> No error, 216 distinct states: nothing is ever decided. A single acceptor is a single memory, which is what the TM was in two-phase commit. If it's down, every prepared RM waits, exactly as in task 1. Paxos Commit with three acceptors spreads that memory over three processes and needs any two of them.</p>
+<p><strong>5.</strong></p>
+<div class="table-wrap"><table><thead><tr><th>Failure</th><th>Two-phase commit</th><th>Paxos Commit, 3 acceptors</th></tr></thead><tbody>
+<tr><td>An RM crashes before voting</td><td>Decides: <code>TMAbort</code> is always enabled while <code>tmState = "init"</code></td><td>Decides: a leader runs ballot 1 for that RM's instance, hears no vote, and proposes "aborted"</td></tr>
+<tr><td>TM crashes before deciding</td><td>Blocks (task 1)</td><td>There is no single TM: any process may run <code>Phase1a</code>, <code>Phase2a</code> and <code>PCDecide</code></td></tr>
+<tr><td>One acceptor crashes</td><td>(no acceptors)</td><td>Decides (task 2)</td></tr>
+<tr><td>Two acceptors crash</td><td>(no acceptors)</td><td>Blocks (task 3)</td></tr>
+</tbody></table></div>
+<p>Both protocols keep <code>TCConsistent</code> in every case, because no step depends on anyone being up. What changes is who you need alive to finish. The price is more messages and more state. In general, with 2F + 1 acceptors the live ones still contain a majority after F crashes, which is the numeric question above.</p></details>
+</article>

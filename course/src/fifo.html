@@ -1,0 +1,78 @@
+<h1>Model the queue contract.</h1>
+<p class="lead">{{lesson:abp}} used sequences, with <code>Append</code> and <code>Tail</code>, to model message channels. Give a sequence a capacity and you have a queue, a first architecture with ordering, backpressure and boundary cases but no complicated network.</p>
+<!--fig:states-->
+<pre><code>---------------- MODULE BoundedFIFO ----------------
+EXTENDS Naturals, Sequences
+CONSTANTS Values, Capacity
+ASSUME Capacity \in Nat /\ Capacity &gt; 0
+VARIABLE q
+vars == &lt;&lt;q&gt;&gt;
+Init == q = &lt;&lt;&gt;&gt;
+Enqueue(v) == /\ Len(q) &lt; Capacity
+              /\ q' = Append(q,v)
+Dequeue == /\ Len(q) &gt; 0
+           /\ q' = Tail(q)
+Next == (\E v \in Values: Enqueue(v)) \/ Dequeue
+Spec == Init /\ [][Next]_vars
+TypeOK == /\ q \in Seq(Values)
+          /\ Len(q) &lt;= Capacity
+===================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANT Values = {A, B}
+CONSTANT Capacity = 2
+INVARIANT TypeOK</code></pre>
+<p>Here, duplicate values are distinct entries, since <code>q</code> is a sequence. TLC finds 7 distinct states and no error, and they are the 7 nodes above: 1 + 2 + 4. <code>Seq(Values)</code> contains sequences of every finite length, but the capacity guard bounds the reachable ones. The diagram also shows the two boundaries: from a length-2 node only dequeue leaves, and from ⟨⟩ only enqueue. Capacity blocks insertion, and the empty queue blocks removal.</p>
+<h2>TypeOK does not say first-in, first-out</h2>
+<p>Nothing in this module would notice a queue that hands out the wrong item, because it has no output. In the diagram, swap the targets of the two middle <code>deq</code> edges and <code>TypeOK</code> still holds. To state the contract, record what went in and what came out. Bound the history so the state space stays finite.</p>
+<pre><code>---------------- MODULE FIFOOrder ----------------
+EXTENDS Naturals, Sequences
+CONSTANTS Values, Capacity, MaxSends
+VARIABLES q, sent, received
+vars == &lt;&lt;q, sent, received&gt;&gt;
+Init == q = &lt;&lt;&gt;&gt; /\ sent = &lt;&lt;&gt;&gt; /\ received = &lt;&lt;&gt;&gt;
+Enqueue(v) == /\ Len(q) &lt; Capacity
+              /\ Len(sent) &lt; MaxSends
+              /\ q' = Append(q,v)
+              /\ sent' = Append(sent,v)
+              /\ UNCHANGED received
+Dequeue == /\ Len(q) &gt; 0
+           /\ received' = Append(received, Head(q))
+           /\ q' = Tail(q)
+           /\ UNCHANGED sent
+Next == (\E v \in Values: Enqueue(v)) \/ Dequeue
+Spec == Init /\ [][Next]_vars
+TypeOK == /\ q \in Seq(Values)
+          /\ Len(q) &lt;= Capacity
+InOrder == received \o q = sent
+===================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Values = {A, B}
+          Capacity = 2
+          MaxSends = 3
+INVARIANT TypeOK
+INVARIANT InOrder
+CHECK_DEADLOCK FALSE</code></pre>
+<p><code>InOrder</code> says everything sent is either received already or still queued, in the same order. The operator <code>\o</code> is sequence concatenation. This is close in spirit to the refinement mappings of {{lesson:refinement}}: it relates internal state to what an outside observer can see. TLC finds 41 distinct states and no error.</p>
+<details class="answer"><summary>Predict: make Dequeue take the last item instead of the first. Which invariant fails?</summary><p>Only <code>InOrder</code>. With <code>TypeOK</code> alone, the mutated module passes with 69 distinct states, because length and element types are still correct. With <code>InOrder</code>, TLC reports a violation after 3 steps, shown below.</p></details>
+<!--fig:order-->
+<h2>Worked architecture: upload processing</h2>
+<p>A photo app accepts uploads A and B, then generates thumbnails in the background. Give each upload an immutable job ID. The user-visible contract is that accepted jobs do not disappear. FIFO ordering is a separate scheduling promise. A job moving from the waiting queue to a worker must not be mistaken for a completed upload.</p>
+<!--fig:jobs-->
+<pre><code>Claim == /\ Len(waiting) &gt; 0
+         /\ active' = active \cup {Head(waiting)}
+         /\ waiting' = Tail(waiting)
+         /\ UNCHANGED &lt;&lt;accepted, done&gt;&gt;
+ExactlyOnePlace ==
+    /\ Waiting \cup active \cup done = accepted
+    /\ Waiting \cap active = {}
+    /\ Waiting \cap done = {}
+    /\ active \cap done = {}</code></pre>
+<p>This comes from the complete <code>UploadJobs</code> module with <code>Jobs = {A, B}</code>, which also has <code>Accept</code> and <code>Finish</code>. <code>Claim</code> removes the head and records it as active in one step, and TLC finds 17 distinct states with <code>ExactlyOnePlace</code> holding. The disjointness lines matter: a count alone could hide one missing job and one duplicate.</p>
+<p>Now try the bad implementation, the dashed edge. A is removed from waiting and the worker crashes before recording it as active:</p>
+<pre><code>CrashAfterRemove == /\ Len(waiting) &gt; 0
+                    /\ waiting' = Tail(waiting)
+                    /\ UNCHANGED &lt;&lt;accepted, active, done&gt;&gt;</code></pre>
+<p>TLC reports the violation in 2 steps: <code>Accept(A)</code>, then the crash, leaving <code>accepted = {A}</code> and A nowhere else. A durable claim, or a visibility protocol that permits redelivery, changes the model so this edge no longer exists.</p>
+<p>Do not combine “FIFO” with “completion order” by accident. Two workers can claim A before B while B’s thumbnail finishes first, because <code>Finish</code> takes any active job. If ordered completion is required, add a publication barrier rather than asserting an order the architecture cannot provide.</p>
+<details class="answer"><summary>Predict: the worker writes A’s thumbnail and crashes before acknowledging A. Where should A go?</summary><p>Redelivery is reasonable if processing is idempotent or detects the existing result by job ID. The queue may deliver A again; the user-visible result should still be recorded once. Model claim attempts separately from logical upload identities.</p></details>
+<div class="quiz" data-answer="2" data-explain="A type invariant only constrains the shape of each state. Ordering relates states over time, so you need a history such as sent and received to express it as an invariant."><fieldset><legend>Why did TypeOK pass on a queue that delivers items out of order?</legend><label><input type="radio" name="q-fifo" value="0">TLC did not explore enough states</label><label><input type="radio" name="q-fifo" value="1">The capacity was too small to show it</label><label><input type="radio" name="q-fifo" value="2">It constrains each state’s shape, not which item leaves</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>

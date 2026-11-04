@@ -1,0 +1,13 @@
+import sys,os; sys.path.insert(0,os.path.join(os.path.dirname(__file__),".."))
+from dg import graph,sequence,lanes,regions
+runs=lanes([("run 1: i =",["0","42","43"]),("run 2: i =",["0","43","44"])],"Two possible executions of the tiny program. Run 1: i is 0, 42, 43. Run 2: i is 0, 43, 44.",cols=["state 1","state 2","state 3"],cell=78)
+cn={"a":(60,90,"i: 0"),"b":(240,40,"i: 42"),"c":(400,90,"i: 43","bad"),"d":(590,90,"i: 44")}
+conf=graph(cn,[("a","b"),("b","c","run 1 stops here",{"lx":34,"ly":-16}),("a","c","run 2"),("c","d","run 2 continues",{"tone":"bad","ly":-14})],"With only the variable i, the state i 43 appears in both runs. In run 1 it has no next state and in run 2 its next state is i 44, a contradiction.",width=660,height=132,mono=True)
+pn={"s":(70,130,"i: 0\npc: start","accent"),"m0":(280,34,"i: 0\npc: middle"),"m1":(280,104,"i: 42\npc: middle"),"m2":(280,174,"i: 43\npc: middle"),"m3":(280,240,"i: 1000\npc: middle"),"d0":(520,34,"i: 1\npc: done"),"d1":(520,104,"i: 43\npc: done","good"),"d2":(520,174,"i: 44\npc: done"),"d3":(520,240,"i: 1001\npc: done")}
+pcg=graph(pn,[("s","m0"),("s","m1"),("s","m2"),("s","m3",""),("m0","d0"),("m1","d1"),("m2","d2"),("m3","d3")],"State graph with pc. From i 0 pc start, one arrow to each i from 0 to 1000 with pc middle (four shown). Each of those goes to i plus 1 with pc done. The value 43 now appears in two different states.",width=620,height=280,mono=True)
+ln={"i":(70,110,"idle"),"s":(250,110,"submitting\nrequest r1","accent"),"o":(470,44,"signedIn\nuser u1","good"),"f":(470,186,"failed\nno session","bad")}
+login=graph(ln,[("i","s","submit",{"ly":-14}),("s","o","success",{"lx":-30,"ly":-8}),("s","f","error",{"lx":8,"ly":-14}),("f","s","retry",{"bend":-46,"lx":-6,"ly":12}),("f","o","must not exist",{"dash":True,"tone":"bad","lx":44})],"Login as a state machine. Idle goes to submitting, which may go to signedIn or failed; failed may retry. A dashed arrow from failed directly to signedIn must not exist.",width=600,height=250)
+FIGS={"runs":(runs,"Two behaviors of the same program. Each column is a state; each move to the next column is a step. Which number someNumber returns is a choice, so several behaviors are possible."),
+"conflict":(conf,"Why i alone fails. A state machine has one rule per state, but the red state would need “no next state” for run 1 and “i: 44” for run 2."),
+"pcgraph":(pcg,"The same program with control state. Four of the 1001 choices are drawn. Value 43 now lives in two different states: i: 43 with pc: middle moves on, and i: 43 with pc: done halts. The conflict is gone."),
+"login":(login,"Alternative next states, not a sequence. From submitting, one arrow is taken in each behavior. The dashed arrow is a rule the model must exclude.")}

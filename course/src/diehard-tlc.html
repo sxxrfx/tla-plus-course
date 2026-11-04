@@ -1,0 +1,110 @@
+<h1>Claim the puzzle is unsolvable, and TLC shows you the solution.</h1>
+<p class="lead">You have the jugs' variables from {{lesson:diehard}} and their actions from {{lesson:actions}}. Now run them. The trick for saving the heroes is one line: tell TLC that the big jug never holds 4 gallons, and let it prove you wrong.</p>
+<!--fig:grid-->
+<h2>Run the module</h2>
+<p>Save the module as <code>DieHard.tla</code>. It contains complete definitions of <code>SmallToBig</code> and <code>BigToSmall</code>, so keep your own solutions from {{lesson:actions}} handy and don't study these until you have seen the error trace.</p>
+<details class="answer"><summary>The complete DieHard module (open to copy; contains the pour solutions)</summary>
+<pre><code>------------------------------ MODULE DieHard ------------------------------
+EXTENDS Integers
+
+VARIABLES small, big
+
+TypeOK == /\ small \in 0..3
+          /\ big   \in 0..5
+
+Init == /\ big   = 0
+        /\ small = 0
+
+FillSmall == /\ small' = 3
+             /\ big'   = big
+
+FillBig == /\ big'   = 5
+           /\ small' = small
+
+EmptySmall == /\ small' = 0
+              /\ big'   = big
+
+EmptyBig == /\ big'   = 0
+            /\ small' = small
+
+SmallToBig == IF big + small =&lt; 5
+                THEN /\ big'   = big + small
+                     /\ small' = 0
+                ELSE /\ big'   = 5
+                     /\ small' = small - (5 - big)
+
+BigToSmall == IF big + small =&lt; 3
+                THEN /\ big'   = 0
+                     /\ small' = big + small
+                ELSE /\ big'   = small - (3 - big)
+                     /\ small' = 3
+
+Next == \/ FillSmall
+        \/ FillBig
+        \/ EmptySmall
+        \/ EmptyBig
+        \/ SmallToBig
+        \/ BigToSmall
+
+NotSolved == big /= 4
+=============================================================================</code></pre></details>
+<p>First run it with only <code>INIT Init</code> and <code>NEXT Next</code> in the config. TLC reports no error and 16 distinct states. No error means little here, because you asked it to check nothing. It shows that TLC could run the spec. The 16 are the filled cells in the grid above, the states reachable in some behavior, the same circles you saw in the lab.</p>
+<p>Next, check type correctness by adding <code>INVARIANT TypeOK</code>. Remember from {{lesson:counter}} that an invariant must hold in every reachable state. Still no error, so every filled cell has values in range.</p>
+<h2>Saving our heroes</h2>
+<p>The 4 gallons must be in the big jug, since the small one holds only 3. So claim that it never happens. “Not equal” is <code>/=</code> or <code>#</code> in ASCII.</p>
+<pre><code>INIT Init
+NEXT Next
+INVARIANT TypeOK
+INVARIANT NotSolved</code></pre>
+<p>In the Toolbox, you can type <code>big /= 4</code> directly under Invariants. A config file needs a named formula, which is why the module defines <code>NotSolved</code>. Run it, and TLC reports <code>Invariant NotSolved is violated</code>, along with this behavior:</p>
+<!--fig:trace-->
+<p>That is the answer, in 7 states: fill the big jug; pour into the small one, leaving 2; empty the small one; pour the 2 across; fill the big jug again; and top up the small one, which holds 2 and takes exactly 1. That leaves 4. Each state in TLC's output names its action, as in <code>State 3: &lt;BigToSmall ...&gt;</code>, which is the label above each arrow in the diagram. In the Toolbox, double-clicking an action in the trace jumps to the part of <code>Next</code> that allowed it.</p>
+<div class="callout"><p><strong>Run with one worker for the shortest trace.</strong> With <code>-workers 1</code>, TLC searches in strict breadth-first order, and we got the lecture's 7-state trace in each run. With several workers, states may be processed out of order. One of our runs reported a longer, 9-state trace ending at small 0, big 4. That trace is valid, but it isn't the shortest.</p></div>
+<details class="answer"><summary>Predict: there are two red cells in the grid. Why does the lecture's trace end at small 3, big 4 and not small 0, big 4?</summary><p>TLC searches breadth-first, so with one worker it finds a nearest violation first. Small 3, big 4 is 7 states from the start. Small 0, big 4 is further: at best you empty the small jug after reaching small 3, big 4, which takes 8 states. The 9-state trace in the callout got there by a different route.</p></details>
+<h2>Reading SmallToBig and BigToSmall</h2>
+<p>Now compare your definitions. Look at the ELSE of <code>SmallToBig</code>. The big jug is filled, so the amount poured is <code>5 - big</code>, and that is what comes out of the small jug. Someone new to TLA+ might say this is wrong, since <code>big</code> was set to 5 on the line above. But you know better from {{lesson:logic}}: <code>/\</code> is commutative, and all these values of <code>big</code> are from the current state.</p>
+<p>A warning follows. <code>=</code> is commutative too, so <code>small' = 0</code> and <code>0 = small'</code> are equivalent formulas, and the specs are equivalent. TLAPS treats them the same, but TLC does not. We ran the flipped version, and it stopped with:</p>
+<pre><code>In evaluation, the identifier small is either undefined or not an operator.</code></pre>
+<p>TLC can almost always handle the ways engineers naturally write specs, and later lectures explain why. For now, follow the lecture's rule: use a primed variable <code>v'</code> only in formulas of the form <code>v' = ...</code> or <code>v' \in ...</code>, where the right side has no primes.</p>
+<h2>Finding your own mistakes</h2>
+<!--fig:errors-->
+<p>The diagram shows what catches what, from left to right. We made each of the lecture's mistakes and ran it:</p>
+<div class="table-wrap"><table><thead><tr><th>Mistake</th><th>Caught by</th><th>What you see</th></tr></thead><tbody><tr><td>Delete the <code>+</code> in <code>big + small</code></td><td>Parser</td><td>A parse error: <code>Encountered "small" at line 24, column 22</code></td></tr><tr><td>Misspell an identifier as <code>bigg</code></td><td>Parser</td><td><code>Unknown operator: `bigg'.</code></td></tr><tr><td>Change 5 to <code>"5"</code> in the comparison</td><td>TLC, while running</td><td><code>The second argument of &lt;= should be an integer</code>, with the behavior so far</td></tr><tr><td>Claim <code>big /= 4</code></td><td>TLC, checking invariants</td><td>The trace above</td></tr></tbody></table></div>
+<p>Execution errors come with a position, so go there first; you can read the rest of the report later if you are curious.</p>
+<h2>Check your definitions</h2>
+<p>Comment out the module's two pour definitions by placing <code>(*</code> and <code>*)</code> around them, and add your own. Fix what the parser finds, then run TLC. Your definitions are probably correct if TLC finds no execution errors, no violation of <code>TypeOK</code>, and a violation of <code>big /= 4</code>. To be sure, remove <code>NotSolved</code> and run again with only <code>TypeOK</code>, since the search stops at the first violation. If it all passes, try writing the definitions a different way. You learn most from your mistakes.</p>
+<div class="quiz" data-answer="2" data-explain="An empty list of checks can't fail. It shows only that TLC could run the spec. An invariant that fails is the check doing its job."><fieldset><legend>With no invariants listed, TLC reports no error and 16 states. What does that show?</legend><label><input type="radio" name="q-a-dhtlc" value="0">The spec is correct</label><label><input type="radio" name="q-a-dhtlc" value="1">4 gallons can't be reached</label><label><input type="radio" name="q-a-dhtlc" value="2">TLC could run the spec, and it reaches 16 states</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="callout"><p><strong>A good experiment can fail.</strong> The lecture's test expects a violation of <code>big /= 4</code>. A check you expect to fail shows that your setup reaches the interesting states. If a deliberately false claim passes, investigate the setup before you trust anything else.</p></div>
+<h2>Transfer: ask for a path through a product</h2>
+<p>The trick works on any “can this happen?” question. Here is the whole cart module from {{lesson:logic}}, now with a <code>Checkout</code> action that you can read after {{lesson:actions}}. It starts with both unknowns free: <code>\in</code> lets a variable begin with either value of a set, so there are 4 initial states.</p>
+<pre><code>---------------- MODULE Cart ----------------
+EXTENDS Integers
+VARIABLES items, termsAccepted, inStock, ordered
+
+Init == /\ items = 2
+        /\ termsAccepted \in {TRUE, FALSE}
+        /\ inStock \in {TRUE, FALSE}
+        /\ ordered = FALSE
+
+Eligible == /\ items &gt; 0
+            /\ termsAccepted
+
+CanCheckout == /\ Eligible
+               /\ inStock
+
+Checkout == /\ CanCheckout
+            /\ ~ordered
+            /\ ordered' = TRUE
+            /\ items' = items
+            /\ termsAccepted' = termsAccepted
+            /\ inStock' = inStock
+
+Next == Checkout
+
+OrderOK == ordered =&gt; termsAccepted
+NeverOrdered == ~ordered
+=============================================</code></pre>
+<p>With <code>INVARIANT OrderOK</code> and the deadlock check off, TLC finds no error in 5 distinct states. Now claim <code>INVARIANT NeverOrdered</code>. TLC reports a violation with a 2-state trace: a cart with the terms accepted and goods in stock, then <code>Checkout</code>. You now have a concrete example of a successful order, and evidence that the implication in that lesson wasn't vacuous. To reach a harder state, you state that it is unreachable and let TLC produce the steps.</p>
+<h2>While you watch</h2>
+<p>This lesson covers Lecture 4 from “Saving our heroes” to the end.</p>
+<ul><li>Look for: the Toolbox's error window, and the double-click that jumps from a trace step to its formula.</li><li>Pause before the trace appears and predict its length, using your experience from the lab.</li><li>The lecture types the spec into the Toolbox. If you use a config file, each click corresponds to a line as shown above.</li><li>This lesson adds the grid, the note on worker count, and the transfer to the cart. The lecture then leaves Hollywood for transaction commit, in {{lesson:sets}} and {{lesson:tcommit}}.</li></ul>

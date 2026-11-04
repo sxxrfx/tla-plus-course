@@ -1,0 +1,237 @@
+<h1>Problem set 2: write the next-state formula.</h1>
+<p class="lead">These problems practice Lecture 2: an initial-state formula, a next-state formula with primed variables, evaluating a formula on a pair of states, and splitting <code>Next</code> into named cases joined by <code>\/</code>. They draw on {{ref:program}} and {{ref:logic}}, and on the models you built in {{ref:ps-l1}}.</p>
+<p>You run TLC in the next chapter, so for now check your formulas by evaluating them on pairs of states, as {{ref:program}} did. One consequence of reading <code>Next</code> as a formula matters in every problem. A case that says nothing about <code>x'</code> is true whatever the next value of <code>x</code> is, so it allows <code>x</code> to change arbitrarily. Until a later lesson gives a shorthand, write <code>x' = x</code> for each variable a case leaves alone. Some solutions also count states: a state that occurs in at least one behavior is called <strong>reachable</strong>.</p>
+
+<article class="problem" id="ps-l2-retry">
+<p class="problem-meta"><span>Problem 1</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">Networking</span></p>
+<h2>An HTTP client's retry loop as Init and Next</h2>
+<p class="uses">Draws on {{ref:states}}, {{ref:program}} and {{ref:logic}}.</p>
+<p>A mobile app's HTTP client makes up to three attempts to send a request, stopping at the first success. Simplified, its code is:</p>
+<pre><code>bool ok = false;
+int attempts = 0;
+void fetchWithRetry()
+{ while (!ok &amp;&amp; attempts &lt; 3) {   // test
+    ok = send();                   // send
+    attempts = attempts + 1;       // count
+  }
+}                                  // done</code></pre>
+<p><code>send()</code> returns true on success and false on failure, and any call can do either, just as <code>someNumber()</code> in {{ref:states}} could return any number. Model the program the way that lesson modeled the tiny C program, with three variables: <code>attempts</code>, <code>ok</code>, and <code>pc</code>, which is <code>"test"</code>, <code>"send"</code>, <code>"count"</code> or <code>"done"</code> according to which statement runs next. Testing the loop condition is one step. The figure shows the control flow you are writing down.</p>
+<!--fig:retry-->
+<ol class="tasks">
+<li>Write <code>Init</code>.</li>
+<li>Write <code>Next</code> as <code>Test \/ Exit \/ Send \/ Count</code>, defining each case as a bulleted <code>/\</code> list, one case per arrow in the figure. Each case must say what the next value of every variable is.</li>
+<li>Evaluate your <code>Next</code> on two pairs of states. First: <code>attempts = 2</code>, <code>ok = FALSE</code>, <code>pc = "count"</code> and <code>attempts' = 3</code>, <code>ok' = FALSE</code>, <code>pc' = "test"</code>. Second: <code>attempts = 3</code>, <code>ok = FALSE</code>, <code>pc = "test"</code> and <code>attempts' = 3</code>, <code>ok' = FALSE</code>, <code>pc' = "send"</code>.</li>
+<li>List every state in which the program can be when <code>pc = "done"</code>.</li>
+</ol>
+<div class="quiz" data-answer="1" data-explain="Exit applies exactly when the while condition is false. The condition is ~ok /\ attempts &lt; 3, and its negation is ok \/ ~(attempts &lt; 3)."><fieldset><legend>Which formula is the guard of <code>Exit</code>?</legend><label><input type="radio" name="q-ps-l2-retry" value="0"><code>~ok /\ attempts &lt; 3</code></label><label><input type="radio" name="q-ps-l2-retry" value="1"><code>ok \/ ~(attempts &lt; 3)</code></label><label><input type="radio" name="q-ps-l2-retry" value="2"><code>ok /\ ~(attempts &lt; 3)</code></label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="4|four" data-explain="ok = TRUE with attempts 1, 2 or 3, and ok = FALSE with attempts 3." data-retry="The loop ends on a success after 1, 2 or 3 attempts, or after 3 failures. Count the distinct (attempts, ok) pairs."><label>How many different states have <code>pc = "done"</code>? <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>In <code>Send</code>, the next value of <code>ok</code> is TRUE or FALSE, and you have no set to put it in. “Or” is <code>\/</code>, so write two equalities joined by it, in parentheses. <code>Exit</code> applies when the while condition is false: negate it with <code>~</code>.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<pre><code>------------------ MODULE PSl2_Retry ------------------
+EXTENDS Integers
+VARIABLES attempts, ok, pc
+
+Init == /\ attempts = 0
+        /\ ok = FALSE
+        /\ pc = "test"
+
+Test == /\ pc = "test"
+        /\ ~ok
+        /\ attempts &lt; 3
+        /\ pc' = "send"
+        /\ attempts' = attempts
+        /\ ok' = ok
+
+Exit == /\ pc = "test"
+        /\ (ok \/ ~(attempts &lt; 3))
+        /\ pc' = "done"
+        /\ attempts' = attempts
+        /\ ok' = ok
+
+Send == /\ pc = "send"
+        /\ (ok' = TRUE \/ ok' = FALSE)
+        /\ pc' = "count"
+        /\ attempts' = attempts
+
+Count == /\ pc = "count"
+         /\ attempts' = attempts + 1
+         /\ pc' = "test"
+         /\ ok' = ok
+
+Next == Test \/ Exit \/ Send \/ Count
+
+BudgetOK == attempts \in 0..3
+DoneOK == pc = "done" =&gt; (ok \/ attempts = 3)
+=======================================================</code></pre>
+<p>The four cases match the four arrows. <code>Send</code> is where the nondeterminism lives: <code>(ok' = TRUE \/ ok' = FALSE)</code> plays the role that <code>i' \in 0..1000</code> played for <code>someNumber()</code>. <code>Exit</code>'s guard is the negation of the while condition, so in every <code>"test"</code> state exactly one of <code>Test</code> and <code>Exit</code> applies. <code>BudgetOK</code> and <code>DoneOK</code> are two claims about every reachable state that you will check with TLC in the next problem set.</p>
+<p><strong>(c)</strong> The first pair satisfies <code>Next</code> through <code>Count</code>: <code>pc</code> is <code>"count"</code>, 3 = 2 + 1, <code>pc'</code> is <code>"test"</code> and <code>ok</code> keeps its value. The second pair doesn't. Its <code>pc</code> is <code>"test"</code>, so only <code>Test</code> or <code>Exit</code> could be true. <code>Test</code> needs <code>attempts &lt; 3</code>, which is false, and <code>Exit</code> needs <code>pc' = "done"</code>. The client has used its three attempts and can't send again.</p>
+<p><strong>(d)</strong> 4 states: <code>ok = TRUE</code> with <code>attempts</code> equal to 1, 2 or 3, and <code>ok = FALSE</code> with <code>attempts = 3</code>. In each, no case of <code>Next</code> applies, so the program halts, as {{ref:program}}'s tiny program did when <code>pc</code> was <code>"done"</code>. We checked this module with TLC, which you install in the next chapter. It has 20 reachable states, and <code>BudgetOK</code> and <code>DoneOK</code> are true in all of them.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l2-bisect">
+<p class="problem-meta"><span>Problem 2</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Algorithms</span></p>
+<h2>Binary search with git bisect: which steps does Next allow?</h2>
+<p class="uses">Draws on {{ref:program}} and {{ref:logic}}.</p>
+<p>A performance regression slipped into one of 16 commits, numbered 1 to 16 in order. Commit 16 is known to be bad, the commit before commit 1 is known to be good, and once a commit is bad every later one is bad too. <code>git bisect</code> finds the first bad commit by binary search: you test a commit in the suspect range, mark it good or bad, and the range shrinks. Git checks out the middle commit for you, but you can test any commit you like, for example when the middle one doesn't build, and mark it with <code>git bisect good &lt;rev&gt;</code> or <code>git bisect bad &lt;rev&gt;</code>.</p>
+<p>This module models only the suspect range: the first bad commit is somewhere in <code>lo..hi</code>.</p>
+<pre><code>------------------ MODULE PSl2_Bisect ------------------
+EXTENDS Integers
+VARIABLES lo, hi
+
+Init == /\ lo = 1
+        /\ hi = 16
+
+MarkBad == /\ lo &lt; hi
+           /\ hi' \in lo..(hi - 1)
+           /\ lo' = lo
+
+MarkGood == /\ lo &lt; hi
+            /\ lo' \in (lo + 1)..hi
+            /\ hi' = hi
+
+Next == MarkBad \/ MarkGood
+========================================================</code></pre>
+<p>In <code>MarkBad</code>, the tested commit is <code>hi'</code> and it was bad, so the range now ends there. In <code>MarkGood</code>, the tested commit is <code>lo' - 1</code> and it was good, so the range now starts just after it. Neither case says which commit to test. Binary search tests the middle; this <code>Next</code> allows every choice, so it describes binary search along with every other way of bisecting. The figure shows one session.</p>
+<!--fig:bisect-->
+<div class="table-wrap"><table><thead><tr><th>Pair</th><th><code>lo</code>, <code>hi</code></th><th><code>lo'</code>, <code>hi'</code></th></tr></thead><tbody>
+<tr><td>a</td><td>1, 16</td><td>1, 8</td></tr><tr><td>b</td><td>1, 16</td><td>9, 16</td></tr><tr><td>c</td><td>9, 16</td><td>9, 16</td></tr><tr><td>d</td><td>5, 8</td><td>6, 7</td></tr><tr><td>e</td><td>7, 7</td><td>7, 8</td></tr><tr><td>f</td><td>5, 8</td><td>5, 5</td></tr><tr><td>g</td><td>3, 4</td><td>4, 4</td></tr>
+</tbody></table></div>
+<ol class="tasks">
+<li>For each pair in the table, decide whether it satisfies <code>Next</code>, and if it does, through which case. Say in words what the step means for the person bisecting.</li>
+<li>How many next states does the initial state have?</li>
+<li>An implementer writes <code>MarkBad</code> with <code>hi' \in lo..hi</code> instead. Which pair in the table does this version allow that the original doesn't? What does that step mean, and why could a program built on it loop forever?</li>
+<li><code>Next</code> has no case that applies when <code>lo = hi</code>. What does it mean when the state machine halts?</li>
+</ol>
+<div class="numcheck" data-answer="4|four" data-explain="a (MarkBad), b (MarkGood), f (MarkBad) and g (MarkGood). c changes nothing, d changes both ends, and e starts from a range that is already one commit." data-retry="Check the guard lo &lt; hi first, then whether exactly one end moved and stayed inside the allowed range."><label>How many of the seven pairs satisfy <code>Next</code>? <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="30|thirty" data-explain="MarkBad allows hi' in 1..15 (15 states) and MarkGood allows lo' in 2..16 (15 states). No state is counted twice, since each keeps a different end fixed." data-retry="Count the values of hi' that MarkBad allows, then the values of lo' that MarkGood allows."><label>Next states of <code>lo = 1, hi = 16</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Each case is a conjunction, so every line must be true. In <code>MarkBad</code>, <code>lo</code> must stay the same and <code>hi'</code> must be in <code>lo..(hi - 1)</code>, which you can write out for the given <code>lo</code> and <code>hi</code>. A pair satisfies <code>Next</code> if either case is true.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong> a: <code>MarkBad</code>; commit 8 was bad, so the first bad commit is in 1..8. b: <code>MarkGood</code>; commit 8 was good, so it is in 9..16. c: no. <code>MarkBad</code> needs <code>hi'</code> in 9..15 and <code>MarkGood</code> needs <code>lo'</code> in 10..16, and here neither end moved. d: no; both cases keep one end fixed, and here both moved. e: no; the guard <code>lo &lt; hi</code> is false, since the answer is already known. f: <code>MarkBad</code>; commit 5 was bad, so commit 5 is the answer. g: <code>MarkGood</code>; commit 3 was good, so commit 4 is the answer. Four pairs satisfy <code>Next</code>.</p>
+<p><strong>(b)</strong> 30: 15 from <code>MarkBad</code>, one for each <code>hi'</code> in 1..15, and 15 from <code>MarkGood</code>, one for each <code>lo'</code> in 2..16. Binary search would choose one of these 30; the spec describes them all, as <code>i' \in 0..1000</code> described every value <code>someNumber()</code> might return.</p>
+<p><strong>(c)</strong> Pair c. With <code>hi' \in lo..hi</code>, <code>MarkBad</code> allows <code>hi' = hi</code>: “test commit 16, find it bad.” Commit 16 was already known to be bad, so the step teaches nothing and leaves the state unchanged. It is the classic off-by-one in binary search. Code that computes the middle as <code>(lo + hi + 1) / 2</code>, rounding up, and sets <code>hi = mid</code> when the test is bad, picks <code>mid = hi</code> once <code>lo + 1 = hi</code>. If that commit is bad, nothing changes, and the loop repeats the same step forever. We ran both modules through TLC: each reaches the same 136 states, every range with 1 ≤ <code>lo</code> ≤ <code>hi</code> ≤ 16. The bug adds no new state, only a step from a state to itself, so you can't find it by asking which states are reachable. You find it by reading <code>Next</code>.</p>
+<p><strong>(d)</strong> The state machine halts when <code>lo = hi</code>: the range holds one commit, which is the first bad one. Here halting is the intended end, as it was for the tiny program in {{ref:program}}.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l2-pool">
+<p class="problem-meta"><span>Problem 3</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Databases</span></p>
+<h2>Find the step a buggy connection pool allows</h2>
+<p class="uses">Draws on {{ref:program}} and {{ref:logic}}.</p>
+<p>A web service talks to Postgres through a connection pool capped at 3 connections, because each Postgres connection is a separate server process and costs memory. The pool starts empty and opens connections only when needed. It counts <code>idle</code> connections (open, not in use) and <code>busy</code> ones (checked out by a request). Four things can happen:</p>
+<ul><li><strong>Open</strong>: if fewer than 3 connections exist, the pool opens one; it starts idle.</li><li><strong>Acquire</strong>: a request checks out an idle connection.</li><li><strong>Release</strong>: a request returns its connection, which becomes idle.</li><li><strong>Evict</strong>: the pool closes an idle connection that has been unused for too long.</li></ul>
+<p>The figure shows part of the state graph the authors have in mind. A teammate wrote this module. <code>PoolOK</code> is the pool's promise: no count is negative, and there are never more than <code>Max</code> connections.</p>
+<!--fig:pool-->
+<pre><code>----------------- MODULE PSl2_PoolBug -----------------
+EXTENDS Integers
+VARIABLES idle, busy
+
+Max == 3
+
+Init == /\ idle = 0
+        /\ busy = 0
+
+Open    == /\ idle + busy &lt; Max
+           /\ idle' = idle + 1
+           /\ busy' = busy
+
+Acquire == /\ busy &lt; Max
+           /\ idle' = idle - 1
+           /\ busy' = busy + 1
+
+Release == /\ busy &gt; 0
+           /\ busy' = busy - 1
+           /\ idle' = idle + 1
+
+Evict   == /\ idle &gt; 0
+           /\ idle' = idle - 1
+           /\ busy' = busy
+
+Next == Open \/ Acquire \/ Release \/ Evict
+
+PoolOK == /\ idle \in 0..Max
+          /\ busy \in 0..Max
+          /\ idle + busy \in 0..Max
+=======================================================</code></pre>
+<ol class="tasks">
+<li>For each of the four cases, name its guard and say which variables change.</li>
+<li>Find a pair of states that satisfies this <code>Next</code>, where the first state satisfies <code>PoolOK</code> and the second doesn't. Start from the initial state.</li>
+<li>Which case is wrong? Describe the real bug it stands for in the pool's code, and fix the case.</li>
+<li>With your fix, argue case by case that if a state satisfies <code>PoolOK</code>, every next state allowed by <code>Next</code> does too.</li>
+</ol>
+<div class="quiz" data-answer="1" data-explain="Acquire checks busy &lt; Max, which asks whether the pool is full, but it takes a connection from idle without checking that an idle one exists."><fieldset><legend>Which case is wrong?</legend><label><input type="radio" name="q-ps-l2-pool" value="0"><code>Open</code></label><label><input type="radio" name="q-ps-l2-pool" value="1"><code>Acquire</code></label><label><input type="radio" name="q-ps-l2-pool" value="2"><code>Release</code></label><label><input type="radio" name="q-ps-l2-pool" value="3"><code>Evict</code></label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="1|one" data-explain="From idle = 0, busy = 0, Acquire's guard busy &lt; 3 is true, so one step reaches idle = -1, busy = 1." data-retry="Try each case on the initial state idle = 0, busy = 0. Which guards are true there?"><label>Fewest steps from the initial state to a state where <code>PoolOK</code> is false <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>A guard should test exactly what the change needs. A case that subtracts 1 from a count needs that count to be above 0 first. Compare each case's guard with the variable it decreases.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong> <code>Open</code>: guard <code>idle + busy &lt; Max</code>; <code>idle</code> goes up by 1. <code>Acquire</code>: guard <code>busy &lt; Max</code>; <code>idle</code> goes down and <code>busy</code> up. <code>Release</code>: guard <code>busy &gt; 0</code>; <code>busy</code> goes down and <code>idle</code> up. <code>Evict</code>: guard <code>idle &gt; 0</code>; <code>idle</code> goes down.</p>
+<p><strong>(b)</strong> <code>idle = 0, busy = 0</code> and <code>idle' = -1, busy' = 1</code>. The initial state satisfies <code>PoolOK</code>. <code>Acquire</code>'s guard <code>busy &lt; Max</code> is true, so <code>Acquire</code>, and therefore <code>Next</code>, is true for this pair, and the second state has <code>idle = -1</code>. We ran the module through TLC: it reports <code>PoolOK</code> violated by exactly this two-state behavior.</p>
+<p><strong>(c)</strong> <code>Acquire</code> checks whether the pool has room (<code>busy &lt; Max</code>) when it should check whether an idle connection exists. In code, this is a pool that tests “not at capacity” before taking from the idle list, and on an empty list gets nothing, or a connection another request already holds. The fix:</p>
+<pre><code>Acquire == /\ idle &gt; 0
+           /\ idle' = idle - 1
+           /\ busy' = busy + 1</code></pre>
+<p>When the pool is empty, a request now has to wait for <code>Open</code> first, as in the figure, where the only arrow out of the initial state is <code>Open</code>.</p>
+<p><strong>(d)</strong> Suppose a state satisfies <code>PoolOK</code>. <code>Open</code> raises <code>idle + busy</code> by 1, but only when it is below <code>Max</code>, so it stays in 0..Max. <code>Acquire</code> and <code>Release</code> move one connection between the counts, so the total is unchanged, and each decreases a count only when its guard says that count is above 0. <code>Evict</code> lowers <code>idle</code> only when it is above 0, and lowers the total. So every case keeps every conjunct of <code>PoolOK</code> true. Arguing one step at a time like this, without listing behaviors, is how you will later show that a claim holds in every reachable state. TLC agrees: with the fix it finds 10 reachable states and no violation.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l2-button">
+<p class="problem-meta"><span>Problem 4</span><span class="level" title="Difficulty 3 of 3">●●●</span><span class="domain">Design systems</span></p>
+<h2>The design-system Button as Init and Next</h2>
+<p class="uses">Synthesis. Draws on {{ref:ps-l1}} (the Button problem), {{ref:orientation}}, {{ref:states}}, {{ref:program}} and {{ref:logic}}.</p>
+<p>In {{ref:ps-l1}}, problem 3, you chose variables for the design system's Button: <code>phase</code>, <code>disabled</code>, and <code>inflight</code>, the number of requests started and not yet finished. Now write its spec. The rules, as the design system's documentation should state them:</p>
+<ul><li>Initially the phase is idle and no request is in flight. The page may have set <code>disabled</code> either way.</li><li><strong>Click</strong>: possible only when the button isn't disabled and the phase is idle or error. It starts a request and the phase becomes loading.</li><li><strong>Resolve</strong> and <strong>Reject</strong>: the request of a loading button finishes, and the phase becomes success or error.</li><li><strong>Reset</strong>: from success, back to idle (the two seconds are left out).</li><li><strong>Toggle</strong>: the page flips <code>disabled</code>, at any time.</li></ul>
+<p>The figure shows four sequences of states that people on the team wrote down while discussing the double-charge ticket.</p>
+<!--fig:button-behaviors-->
+<ol class="tasks">
+<li>Write a module with <code>Init</code> and <code>Next == Click \/ Resolve \/ Reject \/ Reset \/ Toggle</code>. Use <code>TRUE</code> and <code>FALSE</code> for <code>disabled</code>.</li>
+<li>Check every step of A to D against your <code>Next</code>, and each first state against <code>Init</code>. For each sequence that is not a behavior, name the first step that fails and the case that would have to change to allow it.</li>
+<li>Define <code>OneRequest</code> (<code>inflight</code> is 0 or 1) and <code>LoadingOK</code> (if the phase is loading, exactly one request is in flight). Explain what <code>LoadingOK</code> would tell you in a model where <code>Click</code> could never happen.</li>
+<li>Sequence C is the double charge. Write the change to <code>Click</code> that would make C a behavior.</li>
+</ol>
+<div class="numcheck" data-answer="2|two" data-explain="A and B are behaviors. C fails at its second step and D at its third." data-retry="Check each step: which case could produce it, and is that case's guard true in the state before the step?"><label>How many of A to D are behaviors? <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="3|three|step3" data-explain="D's third step goes from success to loading. Only Click starts a request, and Click is not allowed from success." data-retry="Number the steps of D: step 1 goes from state 1 to state 2."><label>Which step of D is the first one <code>Next</code> forbids? <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>“Either way” in <code>Init</code> is a disjunction: <code>(disabled = TRUE \/ disabled = FALSE)</code>. “Idle or error” in <code>Click</code>'s guard is one too. Remember <code>x' = x</code> for every variable a case leaves alone: <code>Toggle</code> leaves two of them alone.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<pre><code>----------------- MODULE PSl2_Button -----------------
+EXTENDS Integers
+VARIABLES phase, disabled, inflight
+
+Init == /\ phase = "idle"
+        /\ (disabled = TRUE \/ disabled = FALSE)
+        /\ inflight = 0
+
+Click   == /\ ~disabled
+           /\ (phase = "idle" \/ phase = "error")
+           /\ phase' = "loading"
+           /\ inflight' = inflight + 1
+           /\ disabled' = disabled
+
+Resolve == /\ phase = "loading"
+           /\ phase' = "success"
+           /\ inflight' = inflight - 1
+           /\ disabled' = disabled
+
+Reject  == /\ phase = "loading"
+           /\ phase' = "error"
+           /\ inflight' = inflight - 1
+           /\ disabled' = disabled
+
+Reset   == /\ phase = "success"
+           /\ phase' = "idle"
+           /\ inflight' = inflight
+           /\ disabled' = disabled
+
+Toggle  == /\ disabled' = ~disabled
+           /\ phase' = phase
+           /\ inflight' = inflight
+
+Next == Click \/ Resolve \/ Reject \/ Reset \/ Toggle
+
+OneRequest == inflight \in 0..1
+LoadingOK  == (phase = "loading") =&gt; (inflight = 1)
+======================================================</code></pre>
+<p><strong>(b)</strong> A is a behavior: <code>Click</code>, <code>Reject</code>, <code>Click</code> again from error (the retry), then <code>Resolve</code>. B is a behavior: <code>Click</code>, then <code>Toggle</code> while loading, then <code>Resolve</code>, then <code>Reset</code>. Nothing in <code>Resolve</code> or <code>Reset</code> depends on <code>disabled</code>, so the response still lands, as you predicted in {{ref:ps-l1}}. C fails at step 2: the phase stays loading while <code>inflight</code> goes from 1 to 2, which only <code>Click</code> could do, and <code>Click</code> requires idle or error. D fails at step 3: success to loading is again a <code>Click</code>, from a phase <code>Click</code> doesn't allow. To allow D you would change <code>Click</code>'s guard; whether a click on the check mark should start a new request is a design decision the documentation must state.</p>
+<p><strong>(c)</strong> Both definitions are in the module. <code>LoadingOK</code> is an implication, and {{ref:logic}} warned about it: if <code>Click</code> could never happen, the phase would never be loading, so <code>LoadingOK</code> would be true in every state without saying anything. Here it isn't vacuous, because A and B pass through loading states. We checked the module with TLC: it has 8 reachable states, 4 phases times 2 values of <code>disabled</code>, with <code>inflight</code> fixed by the phase, and <code>OneRequest</code> and <code>LoadingOK</code> hold in all of them.</p>
+<p><strong>(d)</strong> Replace the phase condition so that it allows loading, for example <code>/\ ~(phase = "success")</code>. Then C's second step satisfies <code>Click</code>. We ran that variant through TLC as well: <code>OneRequest</code> fails in a three-state behavior, idle with 0, loading with 1, loading with 2, which is exactly C. The spec turns the support ticket into a one-line difference in a guard, and the design-system documentation can now say precisely what the Button guarantees: at most one request per Button at a time. As in {{ref:ps-l1}}, the server still has to recognise a repeated payment that arrives some other way, such as a retry after a lost reply.</p>
+</details>
+</article>

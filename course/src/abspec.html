@@ -1,0 +1,72 @@
+<h1>First say what a channel should accomplish.</h1>
+<p class="lead">You now have two ways to read a spec: as what a system may do, and as a formula another spec can imply. The next lessons use one small protocol for sending data across a channel that loses messages. Before seeing how it works, you write what it should achieve, and that takes one more data structure: sequences.</p>
+<!--fig:send-->
+<h2>Finite sequences</h2>
+<p>A <em>finite sequence</em> is another name for a tuple, and programmers would call it a list. <code>&lt;&lt;-3, "xyz", {0, 2}&gt;&gt;</code> has length 3. A sequence of length N is simply a function with domain <code>1..N</code>, so <code>&lt;&lt;-3, "xyz", {0, 2}&gt;&gt;[2]</code> is <code>"xyz"</code>, and <code>[i \in 1..N |-&gt; i^2]</code> is the sequence of the first N squares. The standard module <code>Sequences</code> defines the operators. These values come from TLC, using the evaluation trick described below:</p>
+<div class="table-wrap"><table><thead><tr><th>Expression</th><th>Value</th></tr></thead><tbody>
+<tr><td><code>Head(&lt;&lt;"Fred", "Mary", "Ted"&gt;&gt;)</code></td><td><code>"Fred"</code></td></tr>
+<tr><td><code>Tail(&lt;&lt;"Fred", "Mary", "Ted"&gt;&gt;)</code></td><td><code>&lt;&lt;"Mary", "Ted"&gt;&gt;</code></td></tr>
+<tr><td><code>Append(&lt;&lt;3, 2, 1&gt;&gt;, "a")</code></td><td><code>&lt;&lt;3, 2, 1, "a"&gt;&gt;</code></td></tr>
+<tr><td><code>&lt;&lt;3, 2, 1&gt;&gt; \o &lt;&lt;"a", "b"&gt;&gt;</code></td><td><code>&lt;&lt;3, 2, 1, "a", "b"&gt;&gt;</code></td></tr>
+<tr><td><code>Len(&lt;&lt;3, 2, 1&gt;&gt;)</code></td><td><code>3</code></td></tr>
+<tr><td><code>1..0</code>, the domain of <code>&lt;&lt;&gt;&gt;</code></td><td><code>{}</code></td></tr>
+</tbody></table></div>
+<p><code>Seq(S)</code> is the set of all finite sequences with elements in S. It is infinite: <code>Seq({3})</code> contains <code>&lt;&lt;&gt;&gt;</code>, <code>&lt;&lt;3&gt;&gt;</code>, <code>&lt;&lt;3, 3&gt;&gt;</code>, and so on. Sequences are the last commonly used data type you need.</p>
+<p>The protocol will need to delete a message from the middle of a channel. No built-in does this, so define it, by writing a function on a shorter domain and working out what each position holds:</p>
+<pre><code>Remove(i, seq) ==
+  [j \in 1..(Len(seq) - 1) |-&gt; IF j &lt; i THEN seq[j] ELSE seq[j + 1]]</code></pre>
+<!--fig:remove-->
+<p>A definition like that deserves a test, and there's no need for a behavior to run one. In the Toolbox, type an expression into a model's results page and TLC computes it. In a plain module, write <code>ASSUME PrintT(Remove(3, &lt;&lt;1, 2, 3, 4&gt;&gt;))</code> after <code>EXTENDS TLC</code>, and TLC prints <code>&lt;&lt;1, 2, 4&gt;&gt;</code> while checking assumptions.</p>
+<h3>The Cartesian product</h3>
+<p><code>S \X T</code> is the set of all pairs <code>&lt;&lt;a, b&gt;&gt;</code> with a in S and b in T. So <code>(1..3) \X {"a", "b"}</code> has six elements. Keep the parentheses. Without them it parses as <code>1..(3 \X {"a", "b"})</code>, and TLC stops with an error. <code>S \X T \X U</code> is the obvious set of triples.</p>
+<h2>What must the protocol accomplish?</h2>
+<p>Sender A sends a sequence of data items to receiver B. An obvious model uses two variables, <code>AVar</code> and <code>BVar</code>. A sets <code>AVar</code> to the string it wants to send. Then B sets <code>BVar</code> equal to it. Watching that, you would see Fred, Mary, Ted, Ann. But suppose A meant to send Mary twice. Nothing would change, and a value can't have been sent if nothing changed.</p>
+<p>So something must change when a value is sent again. The lecture lets each variable be a pair: the value, and one bit that flips every time A chooses a value. The top figure sends Fred, Mary, Mary this way. The spec is short:</p>
+<pre><code>------------------------------- MODULE ABSpec -------------------------------
+EXTENDS Integers
+CONSTANT Data
+VARIABLES AVar, BVar
+
+TypeOK == /\ AVar \in Data \X {0, 1}
+          /\ BVar \in Data \X {0, 1}
+
+vars == &lt;&lt;AVar, BVar&gt;&gt;
+
+Init == /\ AVar \in Data \X {1}
+        /\ BVar = AVar
+
+A == /\ AVar = BVar
+     /\ \E d \in Data : AVar' = &lt;&lt;d, 1 - AVar[2]&gt;&gt;
+     /\ BVar' = BVar
+
+B == /\ AVar # BVar
+     /\ BVar' = AVar
+     /\ AVar' = AVar
+
+Next == A \/ B
+
+Spec == Init /\ [][Next]_vars
+
+Inv == (AVar[2] = BVar[2]) =&gt; (AVar = BVar)
+
+FairSpec == Spec /\ WF_vars(Next)
+=============================================================================</code></pre>
+<p>The last line uses <code>WF</code>, which {{lesson:fairness}} explains; ignore it for now. <code>1 - AVar[2]</code> complements the bit. A step of A needs the two variables equal, because B must have received the last value. A step of B needs them unequal and copies. There's no channel, no message, and no retransmission here, since those belong to <em>how</em>, not <em>what</em>.</p>
+<!--fig:machine-->
+<h2>Check it</h2>
+<p>Type correctness alone doesn't make a spec right. To find errors, check formulas that ought to be invariants. Here that is <code>Inv</code>: if the bits agree, the pairs agree. Make sure you see why before running it. The bits differ exactly between an A step and the following B step.</p>
+<pre><code>SPECIFICATION Spec
+CONSTANT Data = {d1, d2, d3}
+INVARIANT TypeOK
+INVARIANT Inv</code></pre>
+<p><code>d1</code>, <code>d2</code>, <code>d3</code> are model values, as you used for <code>RM</code>. TLC finds no error: 39 states generated, 24 distinct, depth 4.</p>
+<details class="answer"><summary>Predict: where do the 24 states come from?</summary><p>There are 3 × 2 = 6 possible pairs. When the variables agree there is one state per pair, giving 6. When they differ, the bits must differ, by <code>Inv</code>, so AVar is any of 6 pairs and BVar any of the 3 pairs with the other bit, giving 18. And 6 + 18 = 24.</p></details>
+<div class="quiz" data-answer="1" data-explain="BVar must be unchanged by A, and A requires AVar = BVar, so a new A step cannot happen before B copies. The value in AVar can't be overwritten unreceived."><fieldset><legend>A has just set AVar to &lt;&lt;"Mary", 1&gt;&gt; and B has not copied it. Can A now replace it with &lt;&lt;"Ted", 0&gt;&gt;?</legend><label><input type="radio" name="q-abspec" value="0">Yes, A may always choose a new value</label><label><input type="radio" name="q-abspec" value="1">No, action A is not enabled while AVar # BVar</label><label><input type="radio" name="q-abspec" value="2">Only if Ted is in Data</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<p>Like every spec so far, <code>Spec</code> says only what may happen. A behavior may stop right after A sets <code>AVar</code>, so nothing is ever received. {{lesson:fairness}} fixes that.</p>
+<h2>While you watch</h2>
+<ul>
+<li>This lesson covers the first half of the lecture's first part: sequences, the product, ABSpec, and the type and <code>Inv</code> checks. The second half goes with {{lesson:fairness}}.</li>
+<li>Pause at <code>Remove</code> and try to fill in the dots yourself before he reveals the definition. Pause again at the animation with Mary sent twice, and say what you'd add to make it visible.</li>
+<li>He downloads ABSpec, makes a model with a few model values, and has you run it. Do so, in the Toolbox as he shows or in VS Code with the configuration above.</li>
+</ul>
+<p class="resources"><a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/video/videos.html">Lamport's TLA+ Video Course, lecture 9</a>.</p>

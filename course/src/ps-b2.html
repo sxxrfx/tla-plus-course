@@ -1,0 +1,405 @@
+<h1>Problem set 12: make the argument, not just the run.</h1>
+<p class="lead">Four problems about reasoning beyond one TLC run. You'll find the inductive invariant behind a ledger, shrink a connection pool's state space without hiding a bug, compose a client with a rate limiter, and write a hierarchical proof for the locked wallet from {{ref:ps-b1}}. They draw on this chapter's four lessons, and on PlusCal and refinement from the two chapters before it.</p>
+<p>Every module below was checked with TLC exactly as shown, including the inductiveness checks that start from <code>INIT Inv</code>. No proof in this set was checked by a prover: TLAPS wasn't available where these problems were checked, so the proof in Problem 4 was only parsed by SANY, and its invariant checked by TLC.</p>
+
+<article class="problem" id="ps-b2-ledger">
+<p class="problem-meta"><span>Problem 1</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">Databases</span></p>
+<h2>A ledger that never mints money</h2>
+<p class="uses">Draws on {{ref:invariants}}, {{ref:impl-general}} and {{ref:transactions}}.</p>
+<p>A payments ledger moves money between accounts in two steps, because the accounts may live in different database shards. <code>Debit</code> takes the amount from the sender and marks the transfer debited. <code>Credit</code> later pays the receiver. Auditors care about one promise above all: the ledger never creates money, so the balances never add up to more than the money that was put in. Transfer 1 moves 1 from alice to bob, and transfer 2 moves 2 back.</p>
+<pre><code>---------------- MODULE PSb2_Ledger ----------------
+EXTENDS Naturals
+Accounts == {"alice", "bob"}
+Xfers == {1, 2}
+From == [x \in Xfers |-&gt; IF x = 1 THEN "alice" ELSE "bob"]
+To   == [x \in Xfers |-&gt; IF x = 1 THEN "bob" ELSE "alice"]
+Amt  == [x \in Xfers |-&gt; IF x = 1 THEN 1 ELSE 2]
+Total == 3
+VARIABLES bal, status
+vars == &lt;&lt;bal, status&gt;&gt;
+Init == /\ bal = [a \in Accounts |-&gt; IF a = "alice" THEN 2 ELSE 1]
+        /\ status = [x \in Xfers |-&gt; "new"]
+Debit(x) == /\ status[x] = "new"
+            /\ bal[From[x]] &gt;= Amt[x]
+            /\ bal' = [bal EXCEPT ![From[x]] = bal[From[x]] - Amt[x]]
+            /\ status' = [status EXCEPT ![x] = "debited"]
+Credit(x) == /\ status[x] = "debited"
+             /\ bal' = [bal EXCEPT ![To[x]] = bal[To[x]] + Amt[x]]
+             /\ status' = [status EXCEPT ![x] = "credited"]
+Next == \E x \in Xfers : Debit(x) \/ Credit(x)
+Spec == Init /\ [][Next]_vars
+
+RECURSIVE SumOver(_, _)
+SumOver(f, S) == IF S = {} THEN 0
+                 ELSE LET s == CHOOSE e \in S : TRUE
+                      IN  f[s] + SumOver(f, S \ {s})
+InFlight == [x \in Xfers |-&gt; IF status[x] = "debited" THEN Amt[x] ELSE 0]
+
+TypeOK == /\ bal \in [Accounts -&gt; 0..Total]
+          /\ status \in [Xfers -&gt; {"new", "debited", "credited"}]
+NoMint == SumOver(bal, Accounts) &lt;= Total
+Conservation == SumOver(bal, Accounts) + SumOver(InFlight, Xfers) = Total
+IndNoMint == TypeOK /\ NoMint
+IndCons   == TypeOK /\ Conservation
+====================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+INVARIANT TypeOK NoMint Conservation
+CHECK_DEADLOCK FALSE</code></pre>
+<ol class="tasks">
+<li>Run the cfg above. Then check whether <code>NoMint</code> is inductive, starting TLC from every state of <code>IndNoMint</code>. Describe the counterexample, and say whether it is a bug.</li>
+<li>Check <code>IndCons</code> the same way. Then argue by hand that <code>Conservation</code> is preserved by <code>Debit(x)</code> and <code>Credit(x)</code>, and that it implies <code>NoMint</code>.</li>
+<li>Support asks for a <code>Refund(x)</code> action that returns a transfer's amount to its sender and marks it <code>"refunded"</code>. Write it with the guard <code>status[x] # "new"</code>, check it with the normal cfg and with <code>INIT IndCons</code>, then find the right guard.</li>
+</ol>
+<!--fig:cti-->
+<div class="numcheck" data-answer="27|twenty seven|twenty-seven" data-explain="TLC reports 27 distinct initial states for INIT IndCons: the states in TypeOK whose balances plus in-flight amounts add up to 3. None of them leads outside the set." data-retry="Use INIT IndCons, NEXT Next, INVARIANT IndCons and CHECK_DEADLOCK FALSE, and read the line about initial states."><label>Number of initial states TLC computes for <code>INIT IndCons</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="The start state of the counterexample is unreachable: its balances plus in-flight money add up to 4, not 3. It shows NoMint is too weak to explain itself, not that the ledger is wrong."><fieldset><legend>TLC finds a counterexample to induction for <code>IndNoMint</code>. What does it show?</legend><label><input type="radio" name="q-ps-b2-ledger" value="0">The ledger can mint money</label><label><input type="radio" name="q-ps-b2-ledger" value="1"><code>NoMint</code> holds but needs a stronger invariant to prove</label><label><input type="radio" name="q-ps-b2-ledger" value="2">TLC explored too few states</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>For the inductiveness checks, use a cfg with <code>INIT IndNoMint</code>, <code>NEXT Next</code>, <code>INVARIANT IndNoMint</code> and <code>CHECK_DEADLOCK FALSE</code>, as in {{lesson:invariants}}. <code>NoMint</code> ignores money that has left one account but not arrived in the other. Where is it?</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p>(a) The normal check finds no error in 5 distinct states, the top row of the figure. Starting from <code>IndNoMint</code>, TLC computes 90 initial states and reports a violation after two: from alice = 0, bob = 2 with transfer 2 debited, <code>Credit(2)</code> pays alice 2 and the balances add up to 4. That start state satisfies <code>NoMint</code> (0 + 2 ≤ 3) but is unreachable: transfer 2 has taken 2 from bob, so 4 units exist in all. It isn't a bug. It shows that <code>NoMint</code> doesn't constrain money in flight, so it can't explain why a credit is safe.</p>
+<p>(b) Starting from <code>IndCons</code>, TLC computes 27 initial states and finds no error, so <code>Conservation</code> is inductive for these values. By hand: <code>Debit(x)</code> lowers one balance by <code>Amt[x]</code> and moves x from "new" to "debited", which adds <code>Amt[x]</code> to the in-flight sum. <code>Credit(x)</code> moves x from "debited" to "credited", removing <code>Amt[x]</code> from the in-flight sum, and adds it to a balance. Each step moves money between places, as in <code>Transfer</code> from {{lesson:invariants}}. Since in-flight amounts are never negative, balances plus in-flight equal to 3 implies balances at most 3, which is <code>NoMint</code>. <code>TypeOK</code> needs no separate argument: the guard of <code>Debit</code> keeps balances nonnegative, and <code>Conservation</code> keeps each one at most 3.</p>
+<p>(c) With the guard <code>status[x] # "new"</code> (module <code>PSb2_LedgerRefundBug</code>), the normal check reports <code>NoMint</code> violated after four states: <code>Debit(1)</code>, <code>Credit(1)</code>, then <code>Refund(1)</code> returns 1 to alice although bob was already paid, and the balances add up to 4. That is a real bug, refunding a completed transfer. Starting from <code>IndCons</code>, TLC also finds a counterexample to induction, with a refund of a credited transfer. The right guard is <code>status[x] = "debited"</code>:</p>
+<pre><code>Refund(x) == /\ status[x] = "debited"
+             /\ bal' = [bal EXCEPT ![From[x]] = bal[From[x]] + Amt[x]]
+             /\ status' = [status EXCEPT ![x] = "refunded"]</code></pre>
+<p>With it (module <code>PSb2_LedgerRefund</code>), the normal check finds 7 distinct states, and the check from <code>IndCons</code> starts from 52 states and finds no error. A refund takes money out of flight and returns it, just as a credit does; <code>Conservation</code> told you which guard to write before any trace did.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-b2-pool">
+<p class="problem-meta"><span>Problem 2</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Infrastructure</span></p>
+<h2>Shrink a connection pool, and keep the admin</h2>
+<p class="uses">Draws on {{ref:scaling}}, {{ref:paxos-commit}}, {{ref:transactions}} and {{ref:sets}}.</p>
+<p>An application server keeps a pool of database connections. Clients request one, wait, check one out, and return it, or give up waiting. The pool must never hand one connection to two clients, and a client is busy exactly when it holds one connection. Clients are interchangeable, and so are connections, which makes this a natural place for symmetry.</p>
+<pre><code>---------------- MODULE PSb2_Pool ----------------
+EXTENDS Naturals, FiniteSets, TLC
+CONSTANTS Clients, Conns, Free
+ASSUME Free \notin Clients
+VARIABLES owner, state
+vars == &lt;&lt;owner, state&gt;&gt;
+Init == /\ owner = [k \in Conns |-&gt; Free]
+        /\ state = [c \in Clients |-&gt; "idle"]
+Request(c) == /\ state[c] = "idle"
+              /\ state' = [state EXCEPT ![c] = "waiting"]
+              /\ UNCHANGED owner
+Checkout(c, k) == /\ state[c] = "waiting"
+                  /\ owner[k] = Free
+                  /\ owner' = [owner EXCEPT ![k] = c]
+                  /\ state' = [state EXCEPT ![c] = "busy"]
+Return(c, k) == /\ owner[k] = c
+                /\ owner' = [owner EXCEPT ![k] = Free]
+                /\ state' = [state EXCEPT ![c] = "idle"]
+Timeout(c) == /\ state[c] = "waiting"     \* gave up waiting for a connection
+              /\ state' = [state EXCEPT ![c] = "idle"]
+              /\ UNCHANGED owner
+Next == \E c \in Clients : \/ Request(c) \/ Timeout(c)
+                           \/ \E k \in Conns : Checkout(c, k) \/ Return(c, k)
+Spec == Init /\ [][Next]_vars
+TypeOK == /\ owner \in [Conns -&gt; Clients \cup {Free}]
+          /\ state \in [Clients -&gt; {"idle", "waiting", "busy"}]
+\* A client is busy exactly when it holds one connection.
+HoldsOne == \A c \in Clients :
+              (state[c] = "busy") = (Cardinality({k \in Conns : owner[k] = c}) = 1)
+              /\ Cardinality({k \in Conns : owner[k] = c}) &lt;= 1
+Sym == Permutations(Clients) \cup Permutations(Conns)
+==================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Clients = {c1, c2, c3}
+          Conns = {k1, k2}
+          Free = Free
+INVARIANT TypeOK HoldsOne</code></pre>
+<ol class="tasks">
+<li>Fill in distinct states for 3 clients and 2 connections, 4 and 2, 5 and 3, and 7 and 3, with and without <code>SYMMETRY Sym</code>. Also note how long the 7-and-3 runs take.</li>
+<li>Explain why the symmetry is sound here, using the rule from {{lesson:paxos-commit}}.</li>
+<li>The pool now keeps one connection for an admin client that runs health checks: other clients may check out a connection only if at least two are free. Add <code>CONSTANT Admin</code> with <code>ASSUME Admin \in Clients</code>, the guard, and the invariant <code>AdminCanConnect</code> below. Then make the bug of writing <code>&gt;= 1</code> in place of <code>&gt;= 2</code>, and check the buggy pool with <code>Admin = c1</code> and 3 clients and 2 connections, with and without <code>SYMMETRY Sym</code>.</li>
+<li>Write a symmetry that is sound for the admin pool, and check the buggy pool again.</li>
+</ol>
+<pre><code>FreeConns == {k \in Conns : owner[k] = Free}
+Checkout(c, k) == /\ state[c] = "waiting"
+                  /\ owner[k] = Free
+                  /\ c # Admin =&gt; Cardinality(FreeConns) &gt;= 2
+                  /\ owner' = [owner EXCEPT ![k] = c]
+                  /\ state' = [state EXCEPT ![c] = "busy"]
+AdminCanConnect == state[Admin] = "waiting" =&gt; FreeConns # {}</code></pre>
+<!--fig:sym-->
+<div class="numcheck" data-answer="44|forty four|forty-four" data-explain="TLC's run of the cfg above, with 3 clients and 2 connections and no symmetry, reports 181 states generated and 44 distinct states." data-retry="Run the cfg exactly as given, without a SYMMETRY line."><label>Distinct states for 3 clients and 2 connections, without symmetry <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="2" data-explain="With SYMMETRY Sym, TLC finds no error in 9 states, although the bug is real: without symmetry it reports AdminCanConnect violated. Admin is named in the spec, so permuting c1 with c2 changes the meaning of a state."><fieldset><legend>What does TLC report for the buggy admin pool with <code>SYMMETRY Sym</code>?</legend><label><input type="radio" name="q-ps-b2-pool" value="0"><code>AdminCanConnect</code> violated, as without symmetry</label><label><input type="radio" name="q-ps-b2-pool" value="1">An error saying the symmetry is invalid</label><label><input type="radio" name="q-ps-b2-pool" value="2">No error</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>A symmetry set is sound only if swapping its elements maps behaviors to behaviors and leaves the property's truth unchanged. Look for a constant that names one particular client. For (d), only the clients that are really interchangeable may be permuted.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p>(a) TLC's counts:</p>
+<div class="table-wrap"><table><thead><tr><th>Clients × connections</th><th>Distinct states</th><th>With <code>SYMMETRY Sym</code></th></tr></thead><tbody>
+<tr><td>3 × 2</td><td>44</td><td>9</td></tr><tr><td>4 × 2</td><td>128</td><td>12</td></tr><tr><td>5 × 3</td><td>992</td><td>18</td></tr><tr><td>7 × 3</td><td>8,864</td><td>26</td></tr></tbody></table></div>
+<p>On the machine these were checked on, the 7 × 3 run took about 1 second without symmetry and 17 seconds with it. The reduction is large, but TLC must try 7! × 3! = 30,240 permutations on each state it stores, the same effect {{lesson:scaling}} showed for two-phase commit. Symmetry pays when states are expensive and identities few.</p>
+<p>(b) No client or connection is named anywhere in the spec or in <code>TypeOK</code> and <code>HoldsOne</code>. They appear only through quantifiers and set operations over <code>Clients</code> and <code>Conns</code>, so swapping two clients, or two connections, turns any behavior into another behavior and doesn't change whether an invariant holds. <code>Free</code> is a separate model value and isn't permuted.</p>
+<p>(c) Without symmetry, the correct admin pool passes in 40 distinct states, and the buggy one fails: TLC reports <code>AdminCanConnect</code> violated after six states, in which c1 (the admin) and c2 request, c2 checks out k1, c3 requests and checks out k2, and the admin is left waiting with nothing free. With <code>SYMMETRY Sym</code>, TLC reports no error in 9 distinct states. <code>Admin</code> breaks the symmetry: swapping c1 and c2 turns a violating state into one that satisfies the invariant, as in the figure. TLC explores only one state of each class, so it can miss the violating member entirely, and here it does. Nothing in TLC's output warns you.</p>
+<p>(d) Leave the admin out of the permutations:</p>
+<pre><code>SymSafe == Permutations(Clients \ {Admin}) \cup Permutations(Conns)</code></pre>
+<p>With <code>SYMMETRY SymSafe</code>, TLC reports the violation in the buggy pool again, and the correct admin pool passes in 15 distinct states. The general rule: any constant that singles out an element, like a leader, an admin or a home region, removes that element from the symmetry set.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-b2-gateway">
+<p class="problem-meta"><span>Problem 3</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Infrastructure</span></p>
+<h2>Compose a client with a token-bucket rate limiter</h2>
+<p class="uses">Draws on {{ref:composition}}, {{ref:refinement}}, {{ref:invariants}} and {{ref:counter}}.</p>
+<p>An API gateway protects a service with a token bucket. The bucket holds up to <code>Cap</code> tokens and is refilled over time; each admitted request spends one token, and when the bucket is empty the gateway answers 429 Too Many Requests. One team wrote the bucket and another wrote a client, each as its own module:</p>
+<pre><code>---------------- MODULE PSb2_Bucket ----------------
+EXTENDS Naturals
+CONSTANTS Cap, MaxRefills
+VARIABLES tokens, refills
+bvars == &lt;&lt;tokens, refills&gt;&gt;
+Init == tokens = Cap /\ refills = 0
+Take == /\ tokens &gt; 0
+        /\ tokens' = tokens - 1
+        /\ UNCHANGED refills
+Refill == /\ tokens &lt; Cap
+          /\ refills &lt; MaxRefills       \* bounds the model
+          /\ tokens' = tokens + 1
+          /\ refills' = refills + 1
+Empty == tokens = 0
+Next == Take \/ Refill
+Spec == Init /\ [][Next]_bvars
+====================================================</code></pre>
+<pre><code>---------------- MODULE PSb2_Client ----------------
+EXTENDS Naturals
+CONSTANT MaxReqs
+VARIABLES issued, ok, limited
+cvars == &lt;&lt;issued, ok, limited&gt;&gt;
+Init == issued = 0 /\ ok = 0 /\ limited = 0
+Outstanding == issued &gt; ok + limited
+Send == /\ ~Outstanding                 \* one request at a time
+        /\ issued &lt; MaxReqs
+        /\ issued' = issued + 1
+        /\ UNCHANGED &lt;&lt;ok, limited&gt;&gt;
+GotOk == /\ Outstanding
+         /\ ok' = ok + 1
+         /\ UNCHANGED &lt;&lt;issued, limited&gt;&gt;
+Got429 == /\ Outstanding
+          /\ limited' = limited + 1
+          /\ UNCHANGED &lt;&lt;issued, ok&gt;&gt;
+Next == Send \/ GotOk \/ Got429
+Spec == Init /\ [][Next]_cvars
+====================================================</code></pre>
+<p>The gateway composes them, renaming the client's variables and fixing the constants with <code>INSTANCE … WITH</code>. Admitting a request is a <em>shared</em> step: the client's <code>GotOk</code> and the bucket's <code>Take</code> happen together.</p>
+<pre><code>---------------- MODULE PSb2_Gateway ----------------
+EXTENDS Naturals
+VARIABLES reqs, served, throttled, tokens, refills
+vars == &lt;&lt;reqs, served, throttled, tokens, refills&gt;&gt;
+C == INSTANCE PSb2_Client WITH MaxReqs &lt;- 4, issued &lt;- reqs,
+                               ok &lt;- served, limited &lt;- throttled
+B == INSTANCE PSb2_Bucket WITH Cap &lt;- 2, MaxRefills &lt;- 1
+Init == C!Init /\ B!Init
+\* Shared step: the gateway forwards the request and spends a token.
+Admit    == C!GotOk /\ B!Take
+\* Gateway answers 429 only when the bucket is empty.
+Throttle == C!Got429 /\ B!Empty /\ UNCHANGED &lt;&lt;tokens, refills&gt;&gt;
+Next == \/ C!Send /\ UNCHANGED &lt;&lt;tokens, refills&gt;&gt;
+        \/ Admit
+        \/ Throttle
+        \/ B!Refill /\ UNCHANGED &lt;&lt;reqs, served, throttled&gt;&gt;
+Spec == Init /\ [][Next]_vars
+\* Every admitted request spent a token.
+TokensAccounted == served + tokens = 2 + refills
+=====================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+INVARIANT TokensAccounted
+CHECK_DEADLOCK FALSE</code></pre>
+<ol class="tasks">
+<li>Run it. Then add <code>ClientContract == C!Spec</code> and <code>BucketContract == B!Spec</code> and check both as properties. Why must they hold for any composition written this way?</li>
+<li>Someone suggests composing more simply, with each component stepping its own variables: <code>[C!Next]_&lt;&lt;reqs, served, throttled&gt;&gt; /\ [B!Next]_&lt;&lt;tokens, refills&gt;&gt;</code> as the next-state relation. Check <code>TokensAccounted</code> on that spec and explain the counterexample.</li>
+<li>The client's assumption about the gateway is that a 429 means the bucket was really empty. Write that as an action property <code>HonestThrottle</code>, check it, then delete <code>B!Empty</code> from <code>Throttle</code> and check again.</li>
+</ol>
+<!--fig:compose-->
+<div class="numcheck" data-answer="19|nineteen" data-explain="TLC's run of the gateway with the cfg above reports 24 states generated and 19 distinct states, with TokensAccounted holding." data-retry="Run the composed Spec, not the components."><label>Distinct states TLC finds for the composed gateway <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="0" data-explain="Each conjunct allows its own component to step or stutter, so a step where the client sends and the bucket takes a token at the same time satisfies both. No request was served, so served + tokens drops below 2 + refills."><fieldset><legend>What is the step in TLC's counterexample for the simpler composition?</legend><label><input type="radio" name="q-ps-b2-gateway" value="0">The client sends and the bucket spends a token in the same step</label><label><input type="radio" name="q-ps-b2-gateway" value="1">The client is served without sending</label><label><input type="radio" name="q-ps-b2-gateway" value="2">There is none: only stuttering is possible</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>TLC accepts only one <code>[][…]_v</code> conjunct in a behavior spec, so write the simpler composition as one next-state relation, like <code>OwnVars</code> in {{lesson:composition}}. For (c), an action property has the form <code>[][P]_vars</code>, where P may mention primed variables.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p>The complete module:</p>
+<pre><code>---------------- MODULE PSb2_Gateway ----------------
+EXTENDS Naturals
+VARIABLES reqs, served, throttled, tokens, refills
+vars == &lt;&lt;reqs, served, throttled, tokens, refills&gt;&gt;
+C == INSTANCE PSb2_Client WITH MaxReqs &lt;- 4, issued &lt;- reqs,
+                               ok &lt;- served, limited &lt;- throttled
+B == INSTANCE PSb2_Bucket WITH Cap &lt;- 2, MaxRefills &lt;- 1
+Init == C!Init /\ B!Init
+\* Shared step: the gateway forwards the request and spends a token.
+Admit    == C!GotOk /\ B!Take
+\* Gateway answers 429 only when the bucket is empty.
+Throttle == C!Got429 /\ B!Empty /\ UNCHANGED &lt;&lt;tokens, refills&gt;&gt;
+Next == \/ C!Send /\ UNCHANGED &lt;&lt;tokens, refills&gt;&gt;
+        \/ Admit
+        \/ Throttle
+        \/ B!Refill /\ UNCHANGED &lt;&lt;reqs, served, throttled&gt;&gt;
+Spec == Init /\ [][Next]_vars
+\* Every admitted request spent a token.
+TokensAccounted == served + tokens = 2 + refills
+\* A 429 is sent only when the bucket is empty.
+HonestThrottle == [][throttled' &gt; throttled =&gt; tokens = 0]_vars
+ClientContract == C!Spec
+BucketContract == B!Spec
+\* The naive composition: conjoin the components, each stepping its own variables.
+NaiveNext == [C!Next]_&lt;&lt;reqs, served, throttled&gt;&gt; /\ [B!Next]_&lt;&lt;tokens, refills&gt;&gt;
+Naive == Init /\ [][NaiveNext]_vars
+=====================================================</code></pre>
+<p>(a) TLC finds no error: 24 states generated, 19 distinct. With <code>PROPERTY HonestThrottle ClientContract BucketContract</code> added (the cfg <code>PSb2_Gateway.cfg</code>), it still finds none. Every disjunct of <code>Next</code> is a step of the client and a step or stutter of the bucket, and the other way round. <code>Send</code> and <code>Throttle</code> leave the bucket's variables unchanged, <code>Refill</code> leaves the client's unchanged, and <code>Admit</code> is a step of both. So each component's spec is implied, by the argument of {{lesson:implementation}}, with the <code>WITH</code> renaming as the refinement mapping.</p>
+<p>(b) With <code>SPECIFICATION Naive</code>, TLC reports <code>TokensAccounted</code> violated after two states: one <code>NaiveNext</code> step in which <code>reqs</code> becomes 1 and <code>tokens</code> becomes 1. The client did <code>Send</code> and the bucket did <code>Take</code> in the same step, and nothing ties a <code>Take</code> to a served request. The conjunction of {{lesson:composition}} is still intersection: each conjunct allows its own component's steps, so their intersection allows every combination of them, including simultaneous steps that shouldn't be connected. It also allows <code>GotOk</code> with no <code>Take</code> at all. The fix is to say which steps are shared, as <code>Admit</code> does.</p>
+<p>(c) <code>HonestThrottle == [][throttled' &gt; throttled =&gt; tokens = 0]_vars</code> holds for the gateway. Without <code>B!Empty</code> (module <code>PSb2_GatewayLoose</code>), TLC reports <code>HonestThrottle</code> violated after three states: the client sends, and the gateway answers 429 with 2 tokens in the bucket. <code>TokensAccounted</code> still holds, because a throttle spends nothing. This is assume-guarantee reasoning made concrete: the client's correctness argument may assume a 429 means "slow down", and the gateway must guarantee it. Each guarantee needs its own property, because the conservation invariant can't see this one.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-b2-proof">
+<p class="problem-meta"><span>Problem 4</span><span class="level" title="Difficulty 3 of 3">●●●</span><span class="domain">Databases</span></p>
+<h2>Prove the locked wallet never loses a refund</h2>
+<p class="uses">Draws on {{ref:proofs}}, {{ref:invariants}}, {{ref:pluscal}} and {{ref:ps-b1}}.</p>
+<p>{{ref:ps-b1}} fixed the lost refund with <code>SELECT … FOR UPDATE</code> and checked it for two and three clients. A proof covers any number. Here is that wallet again, module <code>PSb1_WalletLock</code>: each client locks the row and reads the balance, writes the balance plus 10, and commits, which releases the lock.</p>
+<pre><code>---------------- MODULE PSb1_WalletLock ----------------
+EXTENDS Naturals, FiniteSets
+CONSTANT Clients
+(*--algorithm WalletLock
+variables balance = 100, holder = "none";
+define
+    AllDone == \A c \in Clients : pc[c] = "Done"
+    NoLostUpdate == AllDone =&gt; balance = 100 + 10 * Cardinality(Clients)
+end define;
+process Refund \in Clients
+variable local = 0;
+begin
+Select:  \* SELECT balance FROM accounts WHERE id = 1 FOR UPDATE
+    await holder = "none";
+    holder := self;
+    local := balance;
+Update:  \* UPDATE accounts SET balance = $1 WHERE id = 1
+    balance := local + 10;
+Commit:  \* COMMIT releases the row lock
+    holder := "none";
+end process;
+end algorithm; *)
+========================================================</code></pre>
+<p>The translator produces these actions, with <code>Refund(self)</code> their disjunction and <code>Next</code> the usual <code>(\E self \in Clients : Refund(self)) \/ Terminating</code>:</p>
+<pre><code>Init == (* Global variables *)
+        /\ balance = 100
+        /\ holder = "none"
+        (* Process Refund *)
+        /\ local = [self \in Clients |-&gt; 0]
+        /\ pc = [self \in ProcSet |-&gt; "Select"]
+Select(self) == /\ pc[self] = "Select"
+                /\ holder = "none"
+                /\ holder' = self
+                /\ local' = [local EXCEPT ![self] = balance]
+                /\ pc' = [pc EXCEPT ![self] = "Update"]
+                /\ UNCHANGED balance
+Update(self) == /\ pc[self] = "Update"
+                /\ balance' = local[self] + 10
+                /\ pc' = [pc EXCEPT ![self] = "Commit"]
+                /\ UNCHANGED &lt;&lt; holder, local &gt;&gt;
+Commit(self) == /\ pc[self] = "Commit"
+                /\ holder' = "none"
+                /\ pc' = [pc EXCEPT ![self] = "Done"]
+                /\ UNCHANGED &lt;&lt; balance, local &gt;&gt;</code></pre>
+<p>A candidate inductive invariant, in a module that extends the wallet:</p>
+<pre><code>---------------- MODULE PSb2_WalletProof ----------------
+EXTENDS PSb1_WalletLock, TLAPS
+ASSUME ClientsOK == IsFiniteSet(Clients) /\ "none" \notin Clients
+
+Money == Nat
+Paid == {c \in Clients : pc[c] \in {"Commit", "Done"}}
+TypeOK == /\ balance \in Money
+          /\ local \in [Clients -&gt; Money]
+          /\ holder \in Clients \cup {"none"}
+          /\ pc \in [Clients -&gt; {"Select", "Update", "Commit", "Done"}]
+LockHeld  == \A c \in Clients : (pc[c] \in {"Update", "Commit"}) &lt;=&gt; (holder = c)
+FreshRead == \A c \in Clients : pc[c] = "Update" =&gt; local[c] = balance
+Ledger    == balance = 100 + 10 * Cardinality(Paid)
+Inv == TypeOK /\ LockHeld /\ FreshRead /\ Ledger</code></pre>
+<ol class="tasks">
+<li><code>Nat</code> is infinite, so for TLC replace <code>Money</code> by a finite set: add <code>MoneyModel == {0, 100, 110, 120}</code> and the cfg line <code>CONSTANT Money &lt;- MoneyModel</code>. Check that <code>Inv</code> is inductive for two clients, starting from <code>INIT Inv</code>.</li>
+<li>Drop <code>FreshRead</code>, and separately <code>LockHeld</code>, and check each weaker candidate the same way. Explain each counterexample to induction.</li>
+<li>Write a hierarchical proof of <code>THEOREM Spec =&gt; []NoLostUpdate</code>, in the style of {{lesson:proofs}}, with a case for each action. State the facts about <code>Cardinality</code> you need as lemmas with <code>PROOF OMITTED</code>. Make SANY parse it.</li>
+<li>Say exactly what your answer to (c) establishes, and what it doesn't.</li>
+</ol>
+<!--fig:proof-->
+<div class="numcheck" data-answer="144|one hundred forty four|one hundred forty-four" data-explain="TLC computes 144 initial states for INIT Inv with two clients and Money replaced by {0, 100, 110, 120}, and no step leads outside them." data-retry="Use INIT Inv, NEXT Next, Clients = {A, B}, CONSTANT Money <- MoneyModel, INVARIANT Inv and CHECK_DEADLOCK FALSE."><label>Number of initial states TLC computes for <code>INIT Inv</code> with two clients <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="FreshRead says a client about to write holds the current balance. Without it, a state where A's local value is stale satisfies the candidate, and Update(A) breaks Ledger or the type. LockHeld is what keeps FreshRead true: only the holder can change the balance."><fieldset><legend>Which conjunct of <code>Inv</code> says that the value about to be written was read under the lock?</legend><label><input type="radio" name="q-ps-b2-proof" value="0"><code>LockHeld</code></label><label><input type="radio" name="q-ps-b2-proof" value="1"><code>FreshRead</code></label><label><input type="radio" name="q-ps-b2-proof" value="2"><code>Ledger</code></label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Only <code>Update</code> changes <code>Paid</code>: it adds <code>self</code>, which wasn't there because <code>pc[self]</code> was <code>"Update"</code>. So you need "adding a new element to a finite set raises its cardinality by one" and "a subset of a finite set is finite", plus <code>IsFiniteSet(Clients)</code> as an assumption. For the step case, copy the shape of <code>&lt;1&gt;2</code> in <code>InventoryProof</code>.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p>(a) The cfg (<code>PSb2_WalletProof.cfg</code>):</p>
+<pre><code>INIT Inv
+NEXT Next
+CONSTANT Clients = {A, B}
+CONSTANT Money &lt;- MoneyModel
+INVARIANT Inv
+INVARIANT NoLostUpdate
+CHECK_DEADLOCK FALSE</code></pre>
+<p>TLC computes 144 initial states and finds no error, so <code>Inv</code> is inductive for two clients on this finite set of values, and it implies <code>NoLostUpdate</code> in each of them. With three clients and <code>{0, 100, 110, 120, 130}</code>, it finds 2800 states and no error.</p>
+<p>(b) Without <code>FreshRead</code>, TLC starts from a state where A holds the lock at <code>"Update"</code> with <code>local[A] = 0</code> and the balance 100, and <code>Update(A)</code> writes 10. Nothing in the weaker candidate says A's local value is current. Without <code>LockHeld</code>, TLC starts with both clients at <code>"Update"</code>, both holding 100. <code>Update(A)</code> writes 110, and B's <code>FreshRead</code> fails, because B's read is now stale. Both are unreachable states. <code>FreshRead</code> carries the argument about values, and <code>LockHeld</code> is why no one else can make a fresh read stale.</p>
+<p>(c) The proof, in the tree of the figure:</p>
+<pre><code>---------------- MODULE PSb2_WalletProof ----------------
+EXTENDS PSb1_WalletLock, TLAPS
+ASSUME ClientsOK == IsFiniteSet(Clients) /\ "none" \notin Clients
+
+Money == Nat
+Paid == {c \in Clients : pc[c] \in {"Commit", "Done"}}
+TypeOK == /\ balance \in Money
+          /\ local \in [Clients -&gt; Money]
+          /\ holder \in Clients \cup {"none"}
+          /\ pc \in [Clients -&gt; {"Select", "Update", "Commit", "Done"}]
+LockHeld  == \A c \in Clients : (pc[c] \in {"Update", "Commit"}) &lt;=&gt; (holder = c)
+FreshRead == \A c \in Clients : pc[c] = "Update" =&gt; local[c] = balance
+Ledger    == balance = 100 + 10 * Cardinality(Paid)
+Inv == TypeOK /\ LockHeld /\ FreshRead /\ Ledger
+
+LEMMA CardEmpty == Cardinality({}) = 0
+    PROOF OMITTED
+LEMMA CardSubset == \A S, T : IsFiniteSet(T) /\ S \subseteq T =&gt; IsFiniteSet(S)
+    PROOF OMITTED
+LEMMA CardAdd == \A S, x : IsFiniteSet(S) /\ x \notin S =&gt;
+    Cardinality(S \cup {x}) = Cardinality(S) + 1
+    PROOF OMITTED
+
+THEOREM Safety == Spec =&gt; []NoLostUpdate
+&lt;1&gt;1. Init =&gt; Inv
+    BY ClientsOK, CardEmpty DEF Init, ProcSet, Inv, TypeOK, Money,
+       LockHeld, FreshRead, Ledger, Paid
+&lt;1&gt;2. Inv /\ [Next]_vars =&gt; Inv'
+    &lt;2&gt; SUFFICES ASSUME Inv, [Next]_vars PROVE Inv'
+        OBVIOUS
+    &lt;2&gt;1. ASSUME NEW self \in Clients, Select(self) PROVE Inv'
+        \* holder goes from "none" to self, and local[self] gets balance.
+        BY &lt;2&gt;1, ClientsOK DEF Select, Inv, TypeOK, Money, LockHeld,
+           FreshRead, Ledger, Paid
+    &lt;2&gt;2. ASSUME NEW self \in Clients, Update(self) PROVE Inv'
+        \* FreshRead gives balance' = balance + 10, and self joins Paid.
+        &lt;3&gt;1. self \notin Paid /\ Paid' = Paid \cup {self}
+            BY &lt;2&gt;2 DEF Update, Inv, TypeOK, Paid
+        &lt;3&gt;2. IsFiniteSet(Paid)
+            BY ClientsOK, CardSubset DEF Paid
+        &lt;3&gt;3. Cardinality(Paid') = Cardinality(Paid) + 1
+            BY &lt;3&gt;1, &lt;3&gt;2, CardAdd
+        &lt;3&gt;4. QED
+            BY &lt;2&gt;2, &lt;3&gt;3 DEF Update, Inv, TypeOK, Money, LockHeld,
+               FreshRead, Ledger
+    &lt;2&gt;3. ASSUME NEW self \in Clients, Commit(self) PROVE Inv'
+        \* holder returns to "none"; Commit and Done are both in Paid.
+        BY &lt;2&gt;3, ClientsOK DEF Commit, Inv, TypeOK, LockHeld, FreshRead,
+           Ledger, Paid
+    &lt;2&gt;4. CASE Terminating \/ UNCHANGED vars
+        BY &lt;2&gt;4 DEF Terminating, vars, Inv, TypeOK, LockHeld, FreshRead,
+           Ledger, Paid
+    &lt;2&gt;5. QED
+        BY &lt;2&gt;1, &lt;2&gt;2, &lt;2&gt;3, &lt;2&gt;4 DEF Next, Refund
+&lt;1&gt;3. Inv =&gt; NoLostUpdate
+    \* When all are Done, Paid = Clients.
+    BY DEF Inv, Ledger, Paid, NoLostUpdate, AllDone
+&lt;1&gt;4. QED
+    BY &lt;1&gt;1, &lt;1&gt;2, &lt;1&gt;3, PTL DEF Spec
+
+\* For TLC only: a finite stand-in for Money, and the weaker candidates.
+MoneyModel == {0, 100, 110, 120}
+NoFresh == TypeOK /\ LockHeld /\ Ledger
+NoLock  == TypeOK /\ FreshRead /\ Ledger
+MoneyModel3 == {0, 100, 110, 120, 130}
+=========================================================</code></pre>
+<p>SANY parses this module with no errors, using a stand-in for the <code>TLAPS</code> module that defines <code>PTL</code>, since TLAPS itself wasn't available. The definitions after the comment <code>For TLC only</code> serve the checks in (a) and (b). In <code>&lt;2&gt;2</code>, <code>FreshRead</code> gives <code>balance' = local[self] + 10 = balance + 10</code>, and <code>&lt;3&gt;3</code> gives one more paid client, so <code>Ledger</code> is preserved. In <code>&lt;2&gt;1</code>, <code>LockHeld</code> and <code>holder = "none"</code> mean no client is at <code>"Update"</code> or <code>"Commit"</code>, so the new holder is the only one. In <code>&lt;1&gt;3</code>, when every client is <code>"Done"</code>, <code>Paid = Clients</code>.</p>
+<p>(d) What was done: TLC checked that <code>Inv</code> is inductive and implies <code>NoLostUpdate</code> for two and three clients, and SANY checked that the proof is well formed. What was not done: no prover checked any step, so a step may need more facts or definitions than its <code>BY</code> lists, and the three lemmas are omitted. With TLAPS installed, you would run it on this module and add detail wherever a step fails. Even a complete proof would establish only this safety property, under the model's assumptions: that every writer takes the row lock, and that <code>SELECT … FOR UPDATE</code> really is one atomic step that waits, locks and reads. It says nothing about the client finishing, and nothing about a writer that bypasses the lock.</p>
+</details>
+</article>

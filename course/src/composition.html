@@ -1,0 +1,122 @@
+<h1>Reuse definitions without hiding assumptions.</h1>
+<p class="lead">In {{lesson:implementation}} you read a specification as a formula, and used <code>INSTANCE</code> to compare two of them. Formulas can also be conjoined. That is how you combine components, and it behaves differently from what you might expect from running programs.</p>
+<!--fig:grid-->
+<h2>Composition needs a shared step convention</h2>
+<p>Writing <code>SpecA /\ SpecB</code> intersects the allowed behaviors. It is not a request to interleave two programs. Here is the experiment behind the diagram, with each component written first as if it owned the whole state:</p>
+<pre><code>---------------- MODULE Frames ----------------
+VARIABLES x, y
+vars == &lt;&lt;x, y&gt;&gt;
+Init == x = 0 /\ y = 0
+\* Each component written as if it owned the whole state:
+A == x = 0 /\ x' = 1 /\ y' = y
+B == y = 0 /\ y' = 1 /\ x' = x
+SpecA == Init /\ [][A]_vars
+SpecB == Init /\ [][B]_vars
+Conjoined == [A]_vars /\ [B]_vars
+Interleaved == A \/ B
+\* Each component constrains only its own variable:
+OwnX == x = 0 /\ x' = 1
+OwnY == y = 0 /\ y' = 1
+OwnVars == [OwnX]_x /\ [OwnY]_y
+===============================================</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Next-state relation</th><th>Distinct states</th><th>Steps allowed</th></tr></thead><tbody>
+<tr><td><code>Conjoined</code> (what <code>SpecA /\ SpecB</code> means)</td><td>1</td><td>Only stuttering</td></tr>
+<tr><td><code>Interleaved</code> (<code>A \/ B</code>)</td><td>4</td><td>The solid arrows</td></tr>
+<tr><td><code>OwnVars</code></td><td>4</td><td>The solid and dashed arrows</td></tr></tbody></table></div>
+<p>The first row is the trap: <code>A</code> requires y unchanged and <code>B</code> requires y to change, so no step satisfies both, and all the system can do is stutter. TLC reports no error, because a system that does nothing violates no safety property. For an interleaving composition, write global actions with compatible frames. If you want simultaneous steps, each component must constrain only the variables it owns.</p>
+<p><strong>Assume-guarantee</strong> reasoning says a component guarantees G provided its environment satisfies A. Check that the other components establish A. Two components that each assume the other eventually responds may prove nothing useful when combined: circular progress assumptions need an actual argument.</p>
+<details class="answer"><summary>Predict: is the Conjoined run’s clean TLC result good news?</summary><p>No. It found no error in 1 state. A state count far below what you expected is a result to investigate. A liveness property would have failed here.</p></details>
+<h2>Module tools you have not needed yet</h2>
+<p>You know <code>EXTENDS</code> and named instances. Substituting parameters lets you reuse a whole model. This puts the queue from {{lesson:fifo}} into a job system:</p>
+<pre><code>---------------- MODULE JobQueue ----------------
+CONSTANT Jobs
+VARIABLE pending
+Queue == INSTANCE BoundedFIFO
+    WITH Values &lt;- Jobs, Capacity &lt;- 2, q &lt;- pending
+Spec == Queue!Spec
+QueueSafe == Queue!TypeOK
+=================================================</code></pre>
+<!--fig:subst-->
+<p>TLC finds the same 7 states as before, since only the names changed. <code>Queue!TypeOK</code> is the qualified name for a definition in that instance.</p>
+<p>You have also met <code>LET</code>, <code>CHOOSE</code> and <code>RECURSIVE</code> in the lectures. Two more belong beside them. This module runs under TLC, and its <code>ASSUME</code> lines pass:</p>
+<pre><code>---------------- MODULE LangTools ----------------
+EXTENDS Naturals
+Outcome(x) == CASE x = 0 -&gt; "empty"
+                [] x &gt; 0 -&gt; "ready"
+Pick == CHOOSE x \in {"A", "B"}: TRUE
+RECURSIVE Fact(_)
+Fact(n) == IF n = 0 THEN 1 ELSE n * Fact(n-1)
+LOCAL Helper == 41
+Exported == Helper + 1
+ASSUME Outcome(0) = "empty" /\ Outcome(3) = "ready"
+ASSUME Pick = Pick /\ Pick \in {"A", "B"}
+ASSUME Fact(4) = 24 /\ Exported = 42
+VARIABLE v
+Spec == v = Pick /\ [][v' = Pick]_v
+Stable == v = Pick
+==================================================</code></pre>
+<p><code>LOCAL</code> keeps a helper from being exported to modules that use this one. It does not make state thread-local. <code>CASE</code> chooses a branch whose guard is true. Do not rely on branch order when guards overlap, and add <code>OTHER</code> if no guard might be true, because otherwise TLC stops with “Attempted to evaluate a CASE with no conditions true”.</p>
+<p><code>\EE h : F</code>, temporal existential quantification, hides a variable at the level of whole behaviors: a behavior satisfies it if some sequence of values for <code>h</code> makes F true. That differs from the state-level <code>\E</code>. It is how you state a specification with internal variables hidden, but TLC does not accept it (“TLC cannot handle the temporal formula”).</p>
+<details class="answer"><summary>Predict: does <code>CHOOSE x \in {"A","B"}: TRUE</code> mean TLC will try both at every step?</summary><p>No. It denotes one unspecified value, the same every time, which is why <code>Stable</code> holds above and TLC finds 1 state. To explore both, write <code>\E x \in S: Action(x)</code>.</p></details>
+<div class="quiz" data-answer="2" data-explain="The conjunction keeps only behaviors accepted by both specifications. It can restrict the system more than intended, or, as in Conjoined, rule out all progress."><fieldset><legend>What does SpecA /\ SpecB mean?</legend><label><input type="radio" name="q-composition" value="0">Run A, then run B</label><label><input type="radio" name="q-composition" value="1">Automatically merge conflicting updates</label><label><input type="radio" name="q-composition" value="2">Behaviors must satisfy both specifications</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>Worked example: compose search, selection, and caching</h2>
+<p>A search screen has query text, an asynchronous request, displayed results, and a selected result. You could verify each alone: the service returns matches, the cache stores responses, and selection picks an existing row. The composition can still be wrong when responses arrive out of order.</p>
+<!--fig:seq-->
+<pre><code>---------------- MODULE SearchUI ----------------
+EXTENDS Naturals
+CONSTANTS MaxGen, NoSelection
+VARIABLES generation, inflight, shownGen, results, selected
+vars == &lt;&lt;generation, inflight, shownGen, results, selected&gt;&gt;
+Rows(g) == {&lt;&lt;g, 1&gt;&gt;, &lt;&lt;g, 2&gt;&gt;}
+Init == /\ generation = 0
+        /\ inflight = {}
+        /\ shownGen = 0
+        /\ results = {}
+        /\ selected = NoSelection
+Input ==
+    /\ generation &lt; MaxGen
+    /\ LET g == generation + 1 IN
+         /\ generation' = g
+         /\ inflight' = inflight \cup {[gen |-&gt; g, rows |-&gt; Rows(g)]}
+    /\ UNCHANGED &lt;&lt;shownGen, results, selected&gt;&gt;
+ShowResponse(r) ==
+    /\ r \in inflight
+    /\ r.gen = generation
+    /\ shownGen' = r.gen
+    /\ results' = r.rows
+    /\ selected' = NoSelection
+    /\ inflight' = inflight \ {r}
+    /\ UNCHANGED generation
+DropStale(r) ==
+    /\ r \in inflight
+    /\ r.gen # generation
+    /\ inflight' = inflight \ {r}
+    /\ UNCHANGED &lt;&lt;generation, shownGen, results, selected&gt;&gt;
+Select(row) ==
+    /\ row \in results
+    /\ selected' = row
+    /\ UNCHANGED &lt;&lt;generation, inflight, shownGen, results&gt;&gt;
+Next == \/ Input
+        \/ \E r \in inflight: ShowResponse(r) \/ DropStale(r)
+        \/ \E row \in results: Select(row)
+Spec == Init /\ [][Next]_vars
+Status == CASE shownGen = 0 -&gt; "empty"
+            [] shownGen = generation -&gt; "ready"
+            [] shownGen &lt; generation -&gt; "loading"
+SelectionValid == selected = NoSelection \/ selected \in results
+SettlesOnLatest ==
+    inflight = {} /\ generation &gt; 0 =&gt; shownGen = generation
+StatusKnown == Status \in {"empty", "ready", "loading"}
+=================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS MaxGen = 2
+          NoSelection = NoSelection
+INVARIANT SelectionValid SettlesOnLatest StatusKnown
+CHECK_DEADLOCK FALSE</code></pre>
+<p>TLC finds 16 distinct states and all three invariants hold. <code>Status</code> uses <code>CASE</code> and needs no <code>OTHER</code> because the guards cover every reachable state, which <code>StatusKnown</code> confirms. <code>SettlesOnLatest</code> says that once nothing is in flight, the screen shows the latest generation.</p>
+<p>Two one-line mutations each break a different contract:</p>
+<ul><li>Delete the guard <code>r.gen = generation</code>, and TLC reports <code>SettlesOnLatest</code> violated after 4 steps: the red arrow in the diagram.</li><li>Replace <code>selected' = NoSelection</code> with <code>UNCHANGED selected</code>, and <code>SelectionValid</code> fails after 5 steps: the user picks a row from gen 1, gen 2 arrives, and the selection names a row no longer on screen.</li></ul>
+<p>The request component’s guarantee is “every response carries its original generation”. The display relies on that and guarantees it never accepts an obsolete one. The cache must preserve the relevant key too: if results depend on query, tenant, locale and permissions, caching by query alone breaks the composition, even though each lookup is consistent with its own incomplete key.</p>
+<p>If the UI intentionally keeps old results while loading, the <code>"loading"</code> status above says so. That is better than asserting a stricter invariant and then hiding its violations. A policy is part of the model.</p>
+<details class="answer"><summary>Transfer exercise: why might a query-only cache expose another account’s results?</summary><p>Two accounts can issue the same query with different authorized result sets. If account identity or an equivalent authorization scope is missing from the key, one account’s cached response may be reused for the other. Model two accounts, one shared query, and two distinct expected result sets to expose the missing key component.</p></details>
+<p class="resources"><a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/tla/book.html">Specifying Systems</a>, especially composition, module meaning, and language operators. Keep its published corrections alongside the book.</p>

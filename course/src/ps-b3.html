@@ -1,0 +1,465 @@
+<h1>Problem set 13: failures that outlive the step that caused them.</h1>
+<p class="lead">These problems practice the third Beyond part: durable and volatile state across a crash, leases and fencing tokens, and changing a cluster's membership. They draw on {{ref:idempotency}}, {{ref:fencing}} and {{ref:reconfiguration}}, and reach back to {{ref:messages}}, {{ref:replication}}, {{ref:fairness}} and {{ref:invariants}}.</p>
+<p>Every module below is complete and was checked with TLC exactly as shown, so your state counts should match if your copy is identical. When a problem asks for the length of a trace, run TLC with one worker (<code>-workers 1</code>) so that its breadth-first search reports a shortest one. Each trace length counts the initial state.</p>
+
+<article class="problem" id="ps-b3-wallet">
+<p class="problem-meta"><span>Problem 1</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">Payments</span></p>
+<h2>An idempotency key that doesn't stop a double debit</h2>
+<p class="uses">Draws on {{ref:idempotency}}, {{ref:inventory}} and {{ref:ps-b1}}.</p>
+<p>A wallet service stores balances in Postgres and exposes <code>POST /debit</code>. Following the convention of many payment APIs, the mobile app sends an <code>Idempotency-Key</code> header and, after a timeout, retries with the same key. The handler looks like this:</p>
+<pre><code>const prior = await db.query("SELECT response FROM idem WHERE key = $1", [key]);
+if (prior.rows.length) return prior.rows[0].response;
+await db.query("INSERT INTO ledger (account, amount) VALUES ($1, $2)", [acct, -amt]);
+await db.query("INSERT INTO idem (key, response) VALUES ($1, 'ok')", [key]);
+return "ok";</code></pre>
+<p>Each statement commits on its own. Support finds customers debited twice for one purchase, always during deploys, when a handler process can be killed mid-request. The module below models one key. <code>ledger</code> and <code>stored</code> are durable; each handler's <code>pc</code> is volatile, so <code>Crash</code> resets it. <code>Receive</code> can run whenever a handler is idle, so it stands for the first attempt and for every retry. <code>Mode</code> selects a design: <code>NoTx</code> is the code above, <code>KeyThenDebit</code> swaps the two INSERTs, <code>TxAfterCheck</code> wraps both INSERTs in one transaction after the SELECT, and <code>KeyFirstTx</code> runs one transaction that begins by inserting the key, which is the primary key of <code>idem</code>.</p>
+<pre><code>---------------- MODULE PSb3_Wallet ----------------
+EXTENDS Naturals
+CONSTANTS Handlers, Mode
+ASSUME Mode \in {"NoTx", "KeyThenDebit", "TxAfterCheck", "KeyFirstTx"}
+VARIABLES ledger,   \* durable: debit rows written for key k
+          stored,   \* durable: does the idem row for k exist?
+          pc,       \* pc[h]: volatile position of handler h
+          replied   \* the client has received "ok"
+vars == &lt;&lt;ledger, stored, pc, replied&gt;&gt;
+
+Init == /\ ledger = 0
+        /\ stored = FALSE
+        /\ pc = [h \in Handlers |-&gt; "idle"]
+        /\ replied = FALSE
+
+Go(h, where) == pc' = [pc EXCEPT ![h] = where]
+
+\* An attempt (the first try or a retry with the same key) reaches h.
+Receive(h) == /\ pc[h] = "idle"
+              /\ Go(h, "select")
+              /\ UNCHANGED &lt;&lt;ledger, stored, replied&gt;&gt;
+
+\* SELECT response FROM idem WHERE key = k
+Select(h) == /\ pc[h] = "select" /\ Mode # "KeyFirstTx"
+             /\ Go(h, IF stored THEN "reply" ELSE "write")
+             /\ UNCHANGED &lt;&lt;ledger, stored, replied&gt;&gt;
+
+\* NoTx: two autocommitted INSERTs.
+Debit(h)   == /\ pc[h] = "write" /\ Mode = "NoTx"
+              /\ ledger' = ledger + 1
+              /\ Go(h, "key")
+              /\ UNCHANGED &lt;&lt;stored, replied&gt;&gt;
+SaveKey(h) == /\ pc[h] = "key"
+              /\ stored' = TRUE
+              /\ Go(h, "reply")
+              /\ UNCHANGED &lt;&lt;ledger, replied&gt;&gt;
+
+\* KeyThenDebit: the same two INSERTs, in the other order.
+KeyFirst(h)  == /\ pc[h] = "write" /\ Mode = "KeyThenDebit"
+                /\ stored' = TRUE
+                /\ Go(h, "debit")
+                /\ UNCHANGED &lt;&lt;ledger, replied&gt;&gt;
+DebitLast(h) == /\ pc[h] = "debit"
+                /\ ledger' = ledger + 1
+                /\ Go(h, "reply")
+                /\ UNCHANGED &lt;&lt;stored, replied&gt;&gt;
+
+\* TxAfterCheck: both INSERTs in one transaction, after the SELECT.
+Commit(h) == /\ pc[h] = "write" /\ Mode = "TxAfterCheck"
+             /\ ledger' = ledger + 1
+             /\ stored' = TRUE
+             /\ Go(h, "reply")
+             /\ UNCHANGED replied
+
+\* KeyFirstTx: BEGIN; INSERT INTO idem (k is its primary key);
+\* INSERT INTO ledger; COMMIT. If k already exists the INSERT fails,
+\* nothing is written, and the handler returns the stored response.
+KeyTx(h) == /\ pc[h] = "select" /\ Mode = "KeyFirstTx"
+            /\ IF stored THEN UNCHANGED &lt;&lt;ledger, stored&gt;&gt;
+                         ELSE /\ ledger' = ledger + 1
+                              /\ stored' = TRUE
+            /\ Go(h, "reply")
+            /\ UNCHANGED replied
+
+Reply(h) == /\ pc[h] = "reply"
+            /\ replied' = TRUE
+            /\ Go(h, "idle")
+            /\ UNCHANGED &lt;&lt;ledger, stored&gt;&gt;
+
+\* The process dies: its position is lost, the database is not.
+Crash(h) == /\ pc[h] # "idle"
+            /\ Go(h, "idle")
+            /\ UNCHANGED &lt;&lt;ledger, stored, replied&gt;&gt;
+
+Next == \E h \in Handlers :
+          \/ Receive(h) \/ Select(h) \/ Debit(h) \/ SaveKey(h)
+          \/ KeyFirst(h) \/ DebitLast(h)
+          \/ Commit(h) \/ KeyTx(h) \/ Reply(h) \/ Crash(h)
+Spec == Init /\ [][Next]_vars
+
+AtMostOnce    == ledger &lt;= 1
+OkMeansDebited == replied =&gt; ledger &gt;= 1
+Bound         == ledger &lt;= 2      \* keeps the buggy designs finite
+====================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Handlers = {h1}
+          Mode = "NoTx"
+INVARIANT AtMostOnce
+INVARIANT OkMeansDebited
+CONSTRAINT Bound
+CHECK_DEADLOCK FALSE</code></pre>
+<!--fig:wallet-->
+<ol class="tasks">
+<li>Run <code>NoTx</code> with one handler. Which invariant fails? Match each step of TLC's trace to a line of the handler code.</li>
+<li>A teammate proposes <code>KeyThenDebit</code>: "if the key is saved first, a retry can never debit again." Predict which invariant fails, then run it.</li>
+<li>Run <code>TxAfterCheck</code> with <code>Handlers = {h1}</code> and then with <code>{h1, h2}</code>. Explain the difference. What real event does a second handler stand for?</li>
+<li>Run <code>KeyFirstTx</code> with two handlers. Explain why one <code>KeyTx</code> step is a fair model of a Postgres transaction even though two of them can run at the same time.</li>
+</ol>
+<div class="numcheck" data-answer="8|eight" data-explain="Receive, Select, Debit, Crash, then Receive, Select, Debit again: seven steps after the initial state. The crash lands between the two autocommitted INSERTs, so the retry finds no key." data-retry="Count the initial state. The retry has to repeat Receive and Select before it can debit again."><label>Number of states in TLC's trace for <code>NoTx</code> with one handler <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="With two handlers TLC's shortest NoTx trace has no Crash at all: both handlers pass the SELECT before either writes the key. It is the check-then-act race of the inventory lesson; the crash was only one way into it."><fieldset><legend>Run <code>NoTx</code> with two handlers. Does TLC's shortest double debit need a crash?</legend><label><input type="radio" name="q-ps-b3-wallet" value="0">Yes: without a crash the key is always saved before a retry arrives</label><label><input type="radio" name="q-ps-b3-wallet" value="1">No: two concurrent attempts can both pass the SELECT</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Look at what is durable at the moment of the crash, as in the three-row diagram of {{ref:idempotency}}: the debit, the key, both or neither. For task 3, a second handler can be the retry arriving while the first attempt is still running, not only after a crash.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<div class="table-wrap"><table><thead><tr><th>Mode</th><th>Handlers</th><th>TLC result</th></tr></thead><tbody>
+<tr><td><code>NoTx</code></td><td>1</td><td><code>AtMostOnce</code> violated, 8-state trace</td></tr>
+<tr><td><code>NoTx</code></td><td>2</td><td><code>AtMostOnce</code> violated, 7-state trace, no crash</td></tr>
+<tr><td><code>KeyThenDebit</code></td><td>1</td><td><code>OkMeansDebited</code> violated, 8-state trace</td></tr>
+<tr><td><code>KeyThenDebit</code></td><td>2</td><td><code>OkMeansDebited</code> violated, 7-state trace, no crash</td></tr>
+<tr><td><code>TxAfterCheck</code></td><td>1</td><td>No error: 9 distinct states</td></tr>
+<tr><td><code>TxAfterCheck</code></td><td>2</td><td><code>AtMostOnce</code> violated, 7-state trace, no crash</td></tr>
+<tr><td><code>KeyFirstTx</code></td><td>1</td><td>No error: 8 distinct states</td></tr>
+<tr><td><code>KeyFirstTx</code></td><td>2</td><td>No error: 22 distinct states</td></tr>
+</tbody></table></div>
+<p><strong>1.</strong> <code>AtMostOnce</code> fails. The trace is <code>Receive(h1)</code> (the request arrives), <code>Select(h1)</code> (no key), <code>Debit(h1)</code> (the ledger INSERT commits), <code>Crash(h1)</code> (the deploy kills the process before the second INSERT), then the retry: <code>Receive(h1)</code>, <code>Select(h1)</code> finds no key, <code>Debit(h1)</code> and <code>ledger = 2</code>. The diagram draws it. The key exists to remember the debit, but the two are written by separate commits, so a crash can separate them.</p>
+<p><strong>2.</strong> <code>OkMeansDebited</code> fails, and <code>AtMostOnce</code> never does. With one handler: <code>KeyFirst(h1)</code> saves the key, <code>Crash(h1)</code>, then the retry's <code>Select</code> finds the key and <code>Reply</code> tells the client "ok" with <code>ledger = 0</code>. The customer is told they paid and the merchant ships for free. This is the ID-first trap from {{ref:idempotency}}, and it is why the module checks two invariants: each design can pass one by failing the other.</p>
+<p><strong>3.</strong> One handler passes, two fail without any crash: both run <code>Select</code> while no key exists, then both <code>Commit</code>. A second handler is what a client timeout produces. The app gives up after ten seconds and retries, while the first attempt is still waiting on a slow query. A transaction makes the two INSERTs atomic, but the SELECT ran earlier, outside it. That is the stale check of {{ref:inventory}}.</p>
+<p><strong>4.</strong> <code>KeyFirstTx</code> passes with two handlers. The fix:</p>
+<pre><code>BEGIN;
+INSERT INTO idem (key, response) VALUES ($1, 'ok');   -- key is the primary key
+INSERT INTO ledger (account, amount) VALUES ($2, $3);
+COMMIT;
+-- on unique_violation: ROLLBACK, then SELECT the stored response and return it</code></pre>
+<p>Postgres enforces the unique index across concurrent transactions. If a second transaction inserts a key that an uncommitted transaction has already inserted, it waits; if the first commits, the second fails with a unique violation and writes nothing. So the outcome is always as if one whole transaction ran before the other, and a single atomic step models it. The check is no longer a separate read: the database performs it as part of the write. A crash at any point either rolls back both rows or leaves both.</p>
+<p>This works because the debit is a row in the same database. If the effect were a charge at an external card network, no local transaction could include it, and you would need the provider's own idempotency contract, as {{ref:idempotency}} says.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-b3-lease">
+<p class="problem-meta"><span>Problem 2</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Infrastructure</span></p>
+<h2>A garbage-collection pause outlives a lease</h2>
+<p class="uses">Draws on {{ref:fencing}}, {{ref:messages}}, {{ref:fifo}} and {{ref:ps-b1}}.</p>
+<p>A nightly compaction job rewrites a table's data file in object storage. Two instances run for availability, and only the one holding a lease from a lock service may write. Each instance checks that its lease is still valid just before writing. One night instance c1 checks its lease, then stops for a long stop-the-world garbage-collection pause. Its lease expires, c2 gets the lease and writes, and then c1 wakes up and sends its write anyway. The file ends up with c1's stale data on top of c2's.</p>
+<p>The module adds time explicitly, as {{ref:fencing}} recommends: <code>now</code> is the lock service's clock and <code>Tick</code> advances it. A lease lasts <code>LeaseLen</code> ticks. The pause is simply that any number of <code>Tick</code> steps may happen between <code>Check(c)</code> and <code>Send(c)</code>. Writes travel over a network modeled as a set, so they can be delayed and reordered. Storage keeps <code>log</code>, the sequence of tokens whose writes it applied, so the property is an ordinary invariant. <code>Fenced</code> turns on the storage-side token check.</p>
+<pre><code>---------------- MODULE PSb3_Lease ----------------
+EXTENDS Naturals, Sequences
+CONSTANTS Clients, LeaseLen, MaxTime, Fenced, CheckAndSend
+ASSUME Fenced \in BOOLEAN /\ CheckAndSend \in BOOLEAN /\ LeaseLen &gt;= 1
+VARIABLES now,      \* the lock service's clock
+          holder,   \* the client the service granted the lease to
+          expires,  \* the time at which that lease ends
+          issued,   \* the highest fencing token issued so far
+          token,    \* token[c]: the token client c received
+          pc,       \* pc[c]: "idle", "checked" or "sent"
+          net,      \* tokens of writes still on the network
+          fence,    \* the highest token storage has accepted
+          log       \* tokens of the writes storage accepted, in order
+vars == &lt;&lt;now, holder, expires, issued, token, pc, net, fence, log&gt;&gt;
+Tokens == 1..(MaxTime + 1)  \* at most one grant per tick, plus one at time 0
+
+Init == /\ now = 0
+        /\ holder = "none"
+        /\ expires = 0
+        /\ issued = 0
+        /\ token = [c \in Clients |-&gt; 0]
+        /\ pc = [c \in Clients |-&gt; "idle"]
+        /\ net = {}
+        /\ fence = 0
+        /\ log = &lt;&lt;&gt;&gt;
+
+Tick == /\ now &lt; MaxTime
+        /\ now' = now + 1
+        /\ UNCHANGED &lt;&lt;holder, expires, issued, token, pc, net, fence, log&gt;&gt;
+
+\* The service grants a lease when there is none or it has expired.
+\* (Renewal is left out: a client never takes over its own lease.)
+Acquire(c) == /\ holder = "none" \/ now &gt;= expires
+              /\ holder # c
+              /\ pc[c] # "checked"
+              /\ holder' = c
+              /\ expires' = now + LeaseLen
+              /\ issued' = issued + 1
+              /\ token' = [token EXCEPT ![c] = issued + 1]
+              /\ pc' = [pc EXCEPT ![c] = "idle"]
+              /\ UNCHANGED &lt;&lt;now, net, fence, log&gt;&gt;
+
+\* The client checks that its lease is still valid ...
+Check(c) == /\ ~CheckAndSend
+            /\ pc[c] = "idle" /\ holder = c /\ now &lt; expires
+            /\ pc' = [pc EXCEPT ![c] = "checked"]
+            /\ UNCHANGED &lt;&lt;now, holder, expires, issued, token, net, fence, log&gt;&gt;
+\* ... and later (after a pause of any length) sends its write.
+Send(c) == /\ pc[c] = "checked"
+           /\ net' = net \cup {token[c]}
+           /\ pc' = [pc EXCEPT ![c] = "sent"]
+           /\ UNCHANGED &lt;&lt;now, holder, expires, issued, token, fence, log&gt;&gt;
+\* The variant with no gap between the check and the send.
+CheckSend(c) == /\ CheckAndSend
+                /\ pc[c] = "idle" /\ holder = c /\ now &lt; expires
+                /\ net' = net \cup {token[c]}
+                /\ pc' = [pc EXCEPT ![c] = "sent"]
+                /\ UNCHANGED &lt;&lt;now, holder, expires, issued, token, fence, log&gt;&gt;
+
+\* Storage receives a write. With fencing it refuses old tokens.
+Deliver(t) == /\ t \in net
+              /\ net' = net \ {t}
+              /\ IF Fenced /\ t &lt; fence
+                    THEN UNCHANGED &lt;&lt;fence, log&gt;&gt;
+                    ELSE /\ log' = Append(log, t)
+                         /\ fence' = IF t &gt; fence THEN t ELSE fence
+              /\ UNCHANGED &lt;&lt;now, holder, expires, issued, token, pc&gt;&gt;
+
+Next == \/ Tick
+        \/ \E c \in Clients : Acquire(c) \/ Check(c) \/ Send(c) \/ CheckSend(c)
+        \/ \E t \in Tokens : Deliver(t)
+Spec == Init /\ [][Next]_vars
+
+\* Storage never applies an older lease's write after a newer one.
+WritesInLeaseOrder ==
+    \A i, j \in 1..Len(log) : i &lt; j =&gt; log[i] &lt;= log[j]
+====================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Clients = {c1, c2}
+          LeaseLen = 2
+          MaxTime = 3
+          Fenced = FALSE
+          CheckAndSend = FALSE
+INVARIANT WritesInLeaseOrder
+CHECK_DEADLOCK FALSE</code></pre>
+<!--fig:pause-->
+<ol class="tasks">
+<li>Run the configuration above (<code>Fenced = FALSE</code>, <code>CheckAndSend = FALSE</code>). Write out TLC's trace. Where is the pause, and at what time did c1's lease expire?</li>
+<li>Someone proposes removing the pause window: check the lease and send the write in one step (<code>CheckAndSend = TRUE</code>). Predict whether that fixes the bug, then run it. What takes the pause's place in the trace?</li>
+<li>Set <code>Fenced = TRUE</code> and run both values of <code>CheckAndSend</code>. Report the distinct states.</li>
+<li>{{ref:fencing}} stated "the fence never goes down" as an action property. Why can <code>WritesInLeaseOrder</code> be an invariant here?</li>
+</ol>
+<div class="numcheck" data-answer="11|eleven" data-explain="Acquire(c1), Tick, Check(c1), Tick, Send(c1), Acquire(c2), Check(c2), Send(c2), Deliver(2), Deliver(1): ten steps after the initial state." data-retry="Count the initial state, and both Deliver steps at the end."><label>Number of states in TLC's trace for task 1 <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="0" data-explain="Storage compares against the highest token it has accepted. If c2 has the lease but its write has not arrived, the fence is still 1 or 0, so c1's token 1 passes. Fencing orders writes; it does not revoke the old holder at the moment of the grant."><fieldset><legend>With <code>Fenced = TRUE</code>, c2 holds token 2 but has not written yet. Can storage still accept c1's write with token 1?</legend><label><input type="radio" name="q-ps-b3-lease" value="0">Yes</label><label><input type="radio" name="q-ps-b3-lease" value="1">No, the grant of token 2 revokes token 1</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>A check that was true when it ran tells you nothing about the moment the write lands. Ask where the write is between the check and the moment storage applies it. For task 4, look at which variable remembers the past.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>1.</strong> <code>WritesInLeaseOrder</code> fails with an 11-state trace. <code>Acquire(c1)</code> at time 0 gives token 1 and <code>expires = 2</code>. <code>Tick</code> to 1, then <code>Check(c1)</code>: the lease is valid, since 1 &lt; 2. <code>Tick</code> to 2: the lease has now expired, and c1 has not written. That gap is the pause. <code>Send(c1)</code> puts token 1 on the network. <code>Acquire(c2)</code> gives token 2, c2 checks and sends, and storage applies <code>Deliver(2)</code> and then <code>Deliver(1)</code>: <code>log = &lt;&lt;2, 1&gt;&gt;</code>. The diagram draws this.</p>
+<p><strong>2.</strong> It still fails, now with a 9-state trace: <code>Acquire(c1)</code>, <code>Tick</code>, <code>CheckSend(c1)</code>, <code>Tick</code>, <code>Acquire(c2)</code>, <code>CheckSend(c2)</code>, <code>Deliver(2)</code>, <code>Deliver(1)</code>. The write leaves c1 while the lease is valid, but it waits in <code>net</code> while time passes. To storage, a paused process and a slow message look the same, which is the point {{ref:fencing}} makes. No client-side check can close a gap that lies after the client.</p>
+<p><strong>3.</strong> No error in either run: 186 distinct states with <code>CheckAndSend = FALSE</code> and 124 with <code>TRUE</code>. Storage drops token 1 because its fence is already 2.</p>
+<p><strong>4.</strong> <code>log</code> is a history variable: it records every accepted write, in order. "Never accepted a lower token after a higher one" is then a fact about the current value of <code>log</code>, so a state predicate can express it. The fence alone forgets the past, so with only <code>fence</code> you need an action property that compares two states. Both work. The history version gives a trace that ends with the evidence on screen.</p>
+<p>The model still leaves things out: the clocks of c1 and c2 do not appear, because the lock service's clock decides expiry, and renewals are omitted. Fencing makes those questions matter less for safety: the order of writes no longer depends on any clock being right.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-b3-grow">
+<p class="problem-meta"><span>Problem 3</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Distributed databases</span></p>
+<h2>Grow a three-node cluster to five</h2>
+<p class="uses">Draws on {{ref:reconfiguration}}, {{ref:replication}}, {{ref:sets}} and {{ref:ps-l7}}.</p>
+<p>A configuration store runs on nodes A, B and C and decides with majority quorums. Load is growing and the team wants five nodes. One engineer edits the member list from three to five in one step. Another says that is unsafe and proposes two steps, adding D and then E, "because the old and new majorities of each step overlap". Before arguing, measure. The first module checks quorum overlap between two fixed memberships, using <code>Init</code> as a search over pairs of quorums.</p>
+<pre><code>---------------- MODULE PSb3_Quorums ----------------
+EXTENDS Naturals, FiniteSets
+CONSTANTS Old, New
+Majorities(S) == {Q \in SUBSET S : 2 * Cardinality(Q) &gt; Cardinality(S)}
+VARIABLES q1, q2   \* an old-configuration quorum and a new one
+InitAll == /\ q1 \in Majorities(Old)
+           /\ q2 \in Majorities(New)
+InitDisjoint == InitAll /\ q1 \cap q2 = {}
+Next == UNCHANGED &lt;&lt;q1, q2&gt;&gt;     \* only the initial states matter
+Overlap == q1 \cap q2 # {}
+=====================================================</code></pre>
+<pre><code>INIT InitAll
+NEXT Next
+CONSTANTS Old = {"A", "B", "C"}
+          New = {"A", "B", "C", "D", "E"}
+INVARIANT Overlap</code></pre>
+<p>The second module tracks one decision across a sequence of memberships, in the style of {{ref:reconfiguration}}'s <code>Reconfig</code>. A node stores at most one value, a value is decided when a majority of the active configuration stores it, and <code>Activate</code> moves to the next configuration in <code>Configs</code>. <code>Guarded</code> adds one condition to <code>Activate</code>.</p>
+<pre><code>---------------- MODULE PSb3_Grow ----------------
+EXTENDS Naturals, Sequences, FiniteSets
+CONSTANTS Plan, Guarded
+ASSUME Plan \in {"3to4", "3to5", "3to4to5"} /\ Guarded \in BOOLEAN
+C3 == {"A", "B", "C"}
+C4 == {"A", "B", "C", "D"}
+C5 == {"A", "B", "C", "D", "E"}
+Configs == CASE Plan = "3to4"    -&gt; &lt;&lt;C3, C4&gt;&gt;
+             [] Plan = "3to5"    -&gt; &lt;&lt;C3, C5&gt;&gt;
+             [] Plan = "3to4to5" -&gt; &lt;&lt;C3, C4, C5&gt;&gt;
+Nodes == C5
+Values == {"X", "Y"}
+VARIABLES cfg,      \* index of the active configuration in Configs
+          val,      \* val[n]: the value node n has durably stored
+          decided   \* values acknowledged as decided
+vars == &lt;&lt;cfg, val, decided&gt;&gt;
+
+Init == /\ cfg = 1
+        /\ val = [n \in Nodes |-&gt; "none"]
+        /\ decided = {}
+
+Majority(S, c) == 2 * Cardinality(S \cap c) &gt; Cardinality(c)
+Holding(v) == {n \in Nodes : val[n] = v}
+
+Store(n, v) == /\ n \in Configs[cfg]
+               /\ val[n] = "none"
+               /\ val' = [val EXCEPT ![n] = v]
+               /\ UNCHANGED &lt;&lt;cfg, decided&gt;&gt;
+
+Decide(v) == /\ Majority(Holding(v), Configs[cfg])
+             /\ decided' = decided \cup {v}
+             /\ UNCHANGED &lt;&lt;cfg, val&gt;&gt;
+
+\* Switch to the next configuration. Guarded: only once a majority of
+\* the next configuration already stores every decided value.
+Activate == /\ cfg &lt; Len(Configs)
+            /\ Guarded =&gt; \A v \in decided :
+                             Majority(Holding(v), Configs[cfg + 1])
+            /\ cfg' = cfg + 1
+            /\ UNCHANGED &lt;&lt;val, decided&gt;&gt;
+
+Next == \/ \E n \in Nodes, v \in Values : Store(n, v)
+        \/ \E v \in Values : Decide(v)
+        \/ Activate
+Spec == Init /\ [][Next]_vars
+Agreement == Cardinality(decided) &lt;= 1
+==================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Plan = "3to4to5"
+          Guarded = FALSE
+INVARIANT Agreement
+CHECK_DEADLOCK FALSE</code></pre>
+<!--fig:grow-->
+<ol class="tasks">
+<li>By hand, find a majority of {A, B, C} and a majority of {A, B, C, D, E} that share no node. Can you do the same for {A, B, C} and {A, B, C, D}?</li>
+<li>Run <code>PSb3_Quorums</code> as shown, then with <code>New</code> = {A, B, C, D}. Then replace <code>INIT InitAll</code> with <code>INIT InitDisjoint</code> and drop the invariant: the number of distinct states is the number of disjoint pairs. Report it for both memberships.</li>
+<li>Run <code>PSb3_Grow</code> with each <code>Plan</code> and <code>Guarded = FALSE</code>. Which plans fail? For <code>"3to4to5"</code>, say which nodes decided X, which decided Y, and in which configurations.</li>
+<li>Set <code>Guarded = TRUE</code> and rerun all three. Say in one sentence what the guard requires, and why it repairs the chain of two safe-looking steps.</li>
+</ol>
+<div class="numcheck" data-answer="3|three" data-explain="Only a two-node old quorum can miss a three-node new quorum, and only by taking the three nodes it leaves out: {A,B} with {C,D,E}, {A,C} with {B,D,E}, {B,C} with {A,D,E}. TLC finds 3 distinct states." data-retry="List the old majorities of size 2. For each, which new majorities avoid both of its nodes?"><label>Disjoint (old majority, new majority) pairs when {A, B, C} becomes {A, B, C, D, E} <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="2" data-explain="X was decided by {A, B} in configuration 1 and Y by {C, D, E} in configuration 3. Those two quorums are two steps apart, and nothing forced the evidence for X onto a majority of configuration 2 before the next switch."><fieldset><legend>In the <code>"3to4to5"</code> plan every consecutive pair of memberships has overlapping majorities. Why can it still decide two values?</legend><label><input type="radio" name="q-ps-b3-grow" value="0">Because D was added before it had stored anything</label><label><input type="radio" name="q-ps-b3-grow" value="1">Because majorities of four nodes are not unique</label><label><input type="radio" name="q-ps-b3-grow" value="2">Because the two deciding quorums belong to configurations two steps apart</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Overlap is a fact about two particular quorums. In task 3, ask which two quorums actually decided, not which configurations are adjacent. For task 4, a decided value must be present wherever the next configuration's quorums can look.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>1.</strong> {A, B} is a majority of three, and {C, D, E} is a majority of five; they are disjoint. For four nodes a majority has 3 members, and 2 + 3 &gt; 4 means any old majority of 2 and new majority of 3 must share a node among the four, so no disjoint pair exists.</p>
+<p><strong>2.</strong> With five nodes TLC reports <code>Overlap</code> violated by an initial state, <code>q1 = {"A", "B"}</code> and <code>q2 = {"C", "D", "E"}</code>. With four, no error on 20 distinct states, which is every pair: 4 majorities of {A, B, C} times 5 of {A, B, C, D}. With <code>InitDisjoint</code>, five nodes give 3 distinct states and four give 0.</p>
+<div class="table-wrap"><table><thead><tr><th>Plan</th><th><code>Guarded = FALSE</code></th><th><code>Guarded = TRUE</code></th></tr></thead><tbody>
+<tr><td><code>"3to4"</code></td><td>No error, 164 distinct states</td><td>No error, 140</td></tr>
+<tr><td><code>"3to5"</code></td><td><code>Agreement</code> violated, 9-state trace</td><td>No error, 386</td></tr>
+<tr><td><code>"3to4to5"</code></td><td><code>Agreement</code> violated, 10-state trace</td><td>No error, 485</td></tr>
+</tbody></table></div>
+<p><strong>3.</strong> In the chain, A and B store X and C stores Y. X is decided in configuration 1 by {A, B}. <code>Activate</code> moves to {A, B, C, D}; D stores Y, so Y has 2 of 4, not a majority, and nothing is wrong yet. <code>Activate</code> again; E stores Y, and in configuration 3 Y holds C, D, E: 3 of 5, decided. The diagram shows that {A, B} and {C, D, E} miss each other. Each step's majorities did overlap. But the overlap argument from {{ref:replication}} only protects a decision if the quorum that made it intersects the quorum that might contradict it. Here those quorums are two configurations apart.</p>
+<p><strong>4.</strong> The guard says: switch to the next configuration only when a majority of it already stores every decided value. Then any quorum of the new configuration meets a node that holds X, and that node can never store Y. Applied at each step, the evidence is carried forward one configuration at a time, which repairs the chain. Raft's single-server changes rely on a similar fact supplied by the log. A change starts only after the previous configuration entry is committed in its configuration, and a log is ordered, so a majority that stores that entry also stores every entry before it. "Add one node at a time" is safe only together with that rule, which is the exercise in {{ref:reconfiguration}} made concrete.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-b3-outbox">
+<p class="problem-meta"><span>Problem 4</span><span class="level" title="Difficulty 3 of 3">●●●</span><span class="domain">Microservices</span></p>
+<h2>Ship every order once: the transactional outbox</h2>
+<p class="uses">Synthesis. Draws on {{ref:idempotency}}, {{ref:messages}}, {{ref:fairness}}, {{ref:invariants}} and {{ref:ps-l6}}.</p>
+<p>A checkout service writes orders to Postgres. A shipping service prints a label for each order it hears about through a message broker. The first version commits the order and then publishes an <code>OrderPlaced</code> event, and some orders never ship: the process died between the commit and the publish. This is a dual write, two systems updated by separate steps. The team switches to a <em>transactional outbox</em>. The order and an outbox row are inserted in one transaction, and a relay process reads outbox rows, publishes them, and deletes them afterward. The broker delivers at least once. The shipping service deduplicates by inserting the order ID into a <code>processed</code> table in the same transaction that creates the label.</p>
+<p>The broker is modeled as a set that <code>Consume</code> never removes from, as in {{ref:messages}}. That covers redelivery, the same idea you used for at-least-once delivery in {{ref:ps-l6}}. <code>MaxCrashes</code> bounds how many process crashes can happen. <code>Shipped</code> is the liveness requirement: every committed order eventually gets a label.</p>
+<pre><code>---------------- MODULE PSb3_Outbox ----------------
+EXTENDS Naturals
+CONSTANTS Orders, Mode, Dedup, MaxCrashes
+ASSUME Mode \in {"DualWrite", "Outbox"} /\ Dedup \in BOOLEAN
+VARIABLES orders,     \* order service DB: committed orders
+          outbox,     \* order service DB: outbox rows not yet relayed
+          handler,    \* handler[o]: "new", "publish" or "done" (volatile)
+          relay,      \* the relay's in-memory work: "idle" or an order
+          broker,     \* orders whose event the broker holds
+          processed,  \* shipping DB: orders recorded as handled
+          labels,     \* labels[o]: shipping labels printed for o
+          crashes     \* crashes so far
+vars == &lt;&lt;orders, outbox, handler, relay, broker,
+          processed, labels, crashes&gt;&gt;
+
+Init == /\ orders = {}
+        /\ outbox = {}
+        /\ handler = [o \in Orders |-&gt; "new"]
+        /\ relay = "idle"
+        /\ broker = {}
+        /\ processed = {}
+        /\ labels = [o \in Orders |-&gt; 0]
+        /\ crashes = 0
+
+\* The checkout handler commits the order. In Outbox mode the same
+\* transaction inserts the outbox row.
+Place(o) == /\ handler[o] = "new"
+            /\ orders' = orders \cup {o}
+            /\ IF Mode = "Outbox"
+                  THEN outbox' = outbox \cup {o} /\ handler' = [handler EXCEPT ![o] = "done"]
+                  ELSE UNCHANGED outbox /\ handler' = [handler EXCEPT ![o] = "publish"]
+            /\ UNCHANGED &lt;&lt;relay, broker, processed, labels, crashes&gt;&gt;
+
+\* DualWrite: after the commit, the handler publishes to the broker.
+Publish(o) == /\ handler[o] = "publish"
+              /\ broker' = broker \cup {o}
+              /\ handler' = [handler EXCEPT ![o] = "done"]
+              /\ UNCHANGED &lt;&lt;orders, outbox, relay, processed, labels, crashes&gt;&gt;
+
+\* Outbox: a relay publishes a row, then deletes it in a second step.
+RelayPublish(o) == /\ relay = "idle" /\ o \in outbox
+                   /\ broker' = broker \cup {o}
+                   /\ relay' = o
+                   /\ UNCHANGED &lt;&lt;orders, outbox, handler, processed, labels, crashes&gt;&gt;
+RelayDelete == /\ relay # "idle"
+               /\ outbox' = outbox \ {relay}
+               /\ relay' = "idle"
+               /\ UNCHANGED &lt;&lt;orders, handler, broker, processed, labels, crashes&gt;&gt;
+
+\* A process crash loses in-memory state; databases and broker survive.
+Crash == /\ crashes &lt; MaxCrashes
+         /\ crashes' = crashes + 1
+         /\ \/ \E o \in Orders : /\ handler[o] = "publish"
+                                 /\ handler' = [handler EXCEPT ![o] = "done"]
+                                 /\ UNCHANGED relay
+            \/ /\ relay # "idle"
+               /\ relay' = "idle"
+               /\ UNCHANGED handler
+         /\ UNCHANGED &lt;&lt;orders, outbox, broker, processed, labels&gt;&gt;
+
+\* The broker delivers at least once: an event stays available, so the
+\* consumer can receive it again. With Dedup, printing the label and
+\* recording the order happen in one shipping-DB transaction.
+Consume(o) == /\ o \in broker
+              /\ Dedup =&gt; o \notin processed
+              /\ labels[o] &lt; 2
+              /\ labels' = [labels EXCEPT ![o] = @ + 1]
+              /\ processed' = processed \cup {o}
+              /\ UNCHANGED &lt;&lt;orders, outbox, handler, relay, broker, crashes&gt;&gt;
+
+Next == \/ \E o \in Orders : Place(o) \/ Publish(o) \/ RelayPublish(o) \/ Consume(o)
+        \/ RelayDelete \/ Crash
+Spec == Init /\ [][Next]_vars
+Fairness == /\ \A o \in Orders : WF_vars(Publish(o)) /\ WF_vars(RelayPublish(o))
+                                 /\ WF_vars(Consume(o))
+            /\ WF_vars(RelayDelete)
+FairSpec == Spec /\ Fairness
+
+OneLabel == \A o \in Orders : labels[o] &lt;= 1
+NoLostEvent == \A o \in orders :
+    o \in outbox \/ o \in broker \/ handler[o] = "publish"
+Shipped == \A o \in Orders : (o \in orders) ~&gt; (labels[o] &gt;= 1)
+====================================================</code></pre>
+<pre><code>SPECIFICATION FairSpec
+CONSTANTS Orders = {o1, o2}
+Mode = "Outbox"
+Dedup = TRUE
+MaxCrashes = 1
+INVARIANT OneLabel
+INVARIANT NoLostEvent
+PROPERTY Shipped
+CHECK_DEADLOCK FALSE</code></pre>
+<!--fig:outbox-->
+<ol class="tasks">
+<li>Run <code>Mode = "DualWrite"</code>, <code>Dedup = TRUE</code> with <code>PROPERTY Shipped</code>. Read TLC's counterexample, including its last line. Then check the same design with <code>INVARIANT NoLostEvent</code> instead, and compare the two traces.</li>
+<li>Run <code>Mode = "Outbox"</code>, <code>Dedup = FALSE</code> with both invariants. Which fails? A relay crash between publish and delete is the obvious source of duplicates. Is it in TLC's trace? Explain.</li>
+<li>Run the configuration shown, with the outbox and deduplication. Report the distinct states.</li>
+<li>Remove one conjunct of <code>Fairness</code> at a time and rerun <code>Shipped</code>. Which conjunct can go? For the others, describe the behavior TLC reports.</li>
+<li>Why must crashes be bounded for <code>Shipped</code> to hold, and what would you assume about a real relay instead?</li>
+</ol>
+<div class="numcheck" data-answer="84|eighty-four|eighty four" data-explain="TLC reports 84 distinct states and no error: OneLabel and NoLostEvent hold in every reachable state, and Shipped holds under the fairness conditions." data-retry="Check that Mode is &quot;Outbox&quot;, Dedup is TRUE and MaxCrashes is 1, with two orders."><label>Distinct states for the outbox design with deduplication (task 3) <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="In Outbox mode Publish is never enabled, so its weak fairness says nothing. Without fairness on RelayDelete, the relay can keep one order forever and never publish the next; without fairness on Consume, a delivered event can wait forever."><fieldset><legend>Which conjunct of <code>Fairness</code> can you remove from the outbox design and still have <code>Shipped</code>?</legend><label><input type="radio" name="q-ps-b3-outbox" value="0"><code>WF_vars(RelayDelete)</code></label><label><input type="radio" name="q-ps-b3-outbox" value="1">The fairness of <code>Publish(o)</code></label><label><input type="radio" name="q-ps-b3-outbox" value="2">The fairness of <code>Consume(o)</code></label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>A liveness failure ends in a state the system can stay in forever. Ask what fact about that state already shows the order is lost: that fact is a safety property you can check much sooner. For task 2, adding an element to a set that already contains it changes nothing.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>1.</strong> <code>Shipped</code> is violated: <code>Place(o1)</code>, <code>Crash</code> (the handler dies before publishing), <code>Place(o2)</code>, <code>Publish(o2)</code>, <code>Consume(o2)</code>, then "Stuttering". The behavior stays forever in a state where o1 is committed and nothing will ever ship it. Fairness cannot help, because no action that could deliver o1 is enabled. <code>NoLostEvent</code> says every committed order is in the outbox, in the broker, or about to be published by a live handler. It fails after 3 states: <code>Place(o1)</code>, <code>Crash</code>. This is the method of {{ref:invariants}}: find the state fact that explains why the good thing will happen. A violation of it is found sooner, reads more easily, and needs no fairness.</p>
+<p><strong>2.</strong> <code>OneLabel</code> fails with <code>Place(o1)</code>, <code>RelayPublish(o1)</code>, <code>Consume(o1)</code>, <code>Consume(o1)</code>. No crash is needed. The broker never forgets an event, so any delivered event can be delivered again. A relay crash would republish o1, but adding o1 to <code>broker</code> again changes nothing, because duplicate sends and redeliveries look the same in a set model. That is why the model needs no separate duplicate action, and why the consumer, not the relay, must be idempotent. <code>NoLostEvent</code> holds: the outbox fixed the lost event.</p>
+<p><strong>3.</strong> No error, 84 distinct states, with <code>OneLabel</code>, <code>NoLostEvent</code> and <code>Shipped</code> all holding.</p>
+<p><strong>4.</strong> The fairness of <code>Publish(o)</code> can go: that action belongs to the dual-write design and is never enabled here. The run still finds 84 states and no error. Without <code>WF_vars(RelayDelete)</code>, TLC's counterexample ends with the relay holding o2 forever after a republish, so <code>RelayPublish(o1)</code> is never enabled and o1 is never published. Without fairness on <code>Consume</code>, a crash makes the relay publish o2 twice and then everything stops, with o1's event sitting in the broker unconsumed. Each fairness condition is a claim about a real process: the relay keeps polling, and the consumer keeps reading.</p>
+<p><strong>5.</strong> If the relay could crash after every publish, forever, then <code>RelayDelete</code> would never happen, and o2 would block o1 indefinitely. Real systems assume that crashes eventually stop long enough for progress, or that a supervisor restarts the relay and it eventually completes a cycle. <code>MaxCrashes</code> is a finite stand-in for "finitely many crashes"; it is an assumption, not a fact about the relay. Notice too where exactly-once holds. Labels are at most once because the label row and the <code>processed</code> row commit together. If printing were an external call, you would be back in Problem 1.</p>
+</details>
+</article>

@@ -1,0 +1,56 @@
+<h1>Three pieces of math describe a whole group of processes.</h1>
+<p class="lead">Die Hard had two jugs, so naming each one was easy. The next spec has a set of processes whose size you don't fix in advance. To write about all of them at once you need sets, functions, and the quantifiers "there exists" and "for all".</p>
+<!--fig:fn-->
+<p>The diagram is one function, <code>rmState</code>. Each resource manager on the left has exactly one solid arrow to a value on the right. That is the whole idea of a function, and the dashed arrow is the only change that one step of the next spec will make.</p>
+<h2>While you watch</h2>
+<p>Lecture 5 teaches this notation in passing, while reading the TCommit spec. This lesson collects it so you can recognize it there; {{lesson:tcommit}} then covers the spec itself. Watch for two pauses: Lamport asks why <code>rmState'[r] = "prepared"</code> is wrong, and later asks you to look at what a formula says rather than what you think it should say. Stop and answer before going on. This lesson adds quantifier order and the empty-set cases.</p>
+<h2>Sets</h2>
+<p>A <strong>set</strong> is a collection with no order and no duplicates: it either contains a value or it doesn't. So <code>{"r1", "r2", "r1"}</code> and <code>{"r2", "r1"}</code> are the same set. You write membership as <code>e \in S</code>, and <code>1..3</code> is the set <code>{1, 2, 3}</code>.</p>
+<p>In TLA+ every value is a set, even 42 and <code>"abc"</code>, but the language doesn't say what their elements are. TLC reports an error if asked to evaluate <code>42 \in "abc"</code>. A module can therefore say <code>CONSTANT RM</code> and use <code>RM</code> as a set without declaring a type. A <strong>constant</strong> has the same value throughout every behavior, and you give it a value when you run TLC.</p>
+<h2>Functions are what programmers call arrays</h2>
+<div class="table-wrap"><table><thead><tr><th>Programming</th><th>Math and TLA+</th></tr></thead><tbody><tr><td>array</td><td>function</td></tr><tr><td>index set</td><td>domain</td></tr><tr><td><code>f[e]</code></td><td><code>f[e]</code> (math writes <code>f(e)</code>)</td></tr></tbody></table></div>
+<p>A function's domain can be any set, including one of strings or an infinite one. There are two expressions to tell apart:</p>
+<pre><code>sqr == [i \in 1..42 |-&gt; i^2]     \* one function; sqr[3] = 9, DOMAIN sqr = 1..42
+[RM -&gt; {"working", "prepared"}]   \* a set: all functions from RM to those values</code></pre>
+<p><code>|-&gt;</code> builds one function. <code>-&gt;</code> builds the set of all functions with that domain and those possible values. <code>DOMAIN f</code> gives the domain. (<code>^</code> comes from the <code>Integers</code> module.)</p>
+<!--fig:funcs-->
+<p>In the diagram, the outer box is the value of <code>[{"r1", "r2"} -&gt; {"a", "b"}]</code>. The highlighted inner box is the single function <code>[r \in {"r1", "r2"} |-&gt; "a"]</code>, which is one element of it. A type invariant such as <code>rmState \in [RM -&gt; ...]</code> uses the outer form, and an initial state uses the inner one.</p>
+<h2>Changing one entry</h2>
+<p>A next-state formula can't say only that r's entry changes. Compare the middle and right columns.</p>
+<!--fig:wrong-->
+<p><code>rmState'[r2] = "prepared"</code> says what the new value at r2 is. About every other resource manager it says nothing, which is why the middle column is full of question marks. You must give the whole new function:</p>
+<pre><code>rmState' = [s \in RM |-&gt; IF s = r THEN "prepared" ELSE rmState[s]]
+rmState' = [rmState EXCEPT ![r] = "prepared"]     \* the same thing, shorter</code></pre>
+<p>In the <code>EXCEPT</code> form, the <code>!</code> means nothing. It's just syntax. <code>EXCEPT</code> doesn't modify anything: it is an expression for a new function, and <code>rmState</code> itself keeps its value in the current state.</p>
+<h2>Quantifiers</h2>
+<p><code>\E r \in RM : P(r)</code> says there exists some r in RM for which P(r) is true. <code>\A r \in RM : P(r)</code> says P(r) is true for all r in RM. Over a finite set they are just a long "or" and a long "and":</p>
+<!--fig:quant-->
+<p>Read the diagram from the top. One <code>TRUE</code> row makes the "or" true, and one <code>FALSE</code> row makes the "and" false. A few rules follow from this:</p>
+<ul>
+<li><strong>The bound name is local.</strong> <code>\E xyz \in RM : ...xyz...</code> means the same as <code>\E r \in RM : ...r...</code>, provided <code>xyz</code> isn't already declared or defined. TLA+ doesn't let you redefine a name that already has a meaning.</li>
+<li><strong>Abbreviation.</strong> <code>\A r1, r2 \in RM : P</code> abbreviates <code>\A r1 \in RM : \A r2 \in RM : P</code>.</li>
+<li><strong>Not and not-equal.</strong> <code>~P</code> is "not P", and <code>x # y</code> is "x doesn't equal y".</li>
+<li><strong>Empty set.</strong> <code>\A r \in {} : P</code> is always true, since there is no counterexample, and <code>\E r \in {} : P</code> is always false.</li>
+<li><strong>Scope.</strong> A quantifier reaches as far as it can: to a closing bracket, or to the end of its <code>/\</code> or <code>\/</code> list item. Parentheses end it sooner.</li>
+</ul>
+<pre><code>\A x \in S : x = 1
+    /\ \A x \in T : x = 2     \* illegal: this is inside the first \A, so x is redeclared</code></pre>
+<p>The parser rejects that with a multiply-defined symbol error.</p>
+<h2>Quantifier order changes the meaning</h2>
+<p>A cart holds a book and a mug. Compare two claims about shipping them.</p>
+<pre><code>\A i \in Items : \E w \in Warehouses : i \in CanShip[w]   \* true
+\E w \in Warehouses : \A i \in Items : i \in CanShip[w]   \* false</code></pre>
+<!--fig:order-->
+<p>The first says each item has some warehouse, and different items may have different ones (the left of the diagram). The second says one warehouse handles everything, and the dashed arrow on the right is why it fails. When you read a nested formula, invent a tiny example like this one.</p>
+<details class="answer"><summary>Predict: which of the formulas in this lesson changes meaning if RM is empty?</summary><p>With no resource managers, every <code>\A r \in RM</code> formula is true and every <code>\E r \in RM</code> formula is false. A check that "all RMs are prepared" passes trivially. That's why a claim such as "the cart can be checked out" needs its own "the cart isn't empty" condition: <code>\A</code> alone can't say so.</p></details>
+<h2>Worked example: a group chat</h2>
+<p>A chat has members and a read position for each member. Those are two concepts, so they get two shapes: a set for membership, a function for positions.</p>
+<pre><code>Members   == {"Ada", "Ben"}
+lastRead  == [p \in Members |-&gt; 0]
+lastRead2 == [lastRead EXCEPT !["Ada"] = 2]     \* Ada 2, Ben still 0
+lastRead2 \in [Members -&gt; 0..3]                 \* true
+\A p \in Members : lastRead2[p] &lt;= 3            \* true</code></pre>
+<p>Because <code>lastRead</code> maps each person to a number, Ada and Ben can't accidentally share one cursor. Adding Cara to <code>Members</code> would leave the function's domain out of date, so both must change in one step. An ordered message history would need a sequence, which comes later with {{lesson:abp}}. Every formula in this lesson was checked by TLC as an assumption in a small module.</p>
+<div class="quiz" data-answer="2" data-explain="The arrow -> builds the set of all functions with that domain and those values. The maplet |-> builds one particular function."><fieldset><legend>Which expression is a set of functions?</legend><label><input type="radio" name="q-sets" value="0"><code>[r \in RM |-&gt; 0]</code></label><label><input type="radio" name="q-sets" value="1"><code>{0, 1}</code></label><label><input type="radio" name="q-sets" value="2"><code>[RM -&gt; {0, 1}]</code></label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="0" data-explain="It sets the new value of only one entry. Nothing is said about rmState'[s] for other s, so it doesn't describe a single next state."><fieldset><legend>What is wrong with using <code>rmState'[r] = "prepared"</code> as the whole effect of a step?</legend><label><input type="radio" name="q-sets-frame" value="0">It says nothing about the other entries' new values</label><label><input type="radio" name="q-sets-frame" value="1">Functions can't be primed</label><label><input type="radio" name="q-sets-frame" value="2">It changes every entry to "prepared"</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<p class="resources">Reference: <a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/tla/book.html">Specifying Systems</a>, chapters 1 and 6.</p>

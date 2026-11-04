@@ -1,0 +1,94 @@
+<h1>Keep an old response from replacing a newer choice.</h1>
+<p class="lead">A search screen can show the wrong results even when every request succeeds. Model which response is allowed to change the current view.</p>
+<p>This builds on {{lesson:messages}}, where messages arrive in any order, and on {{lesson:fencing}}, where a resource refused superseded work. Here the resource is your screen, and the token is a request ID.</p>
+<h2>The concrete bug</h2>
+<p>A user searches for cats, then dogs. The cats request is slow; dogs returns first. A handler that displays every successful response shows dogs, then replaces it with cats.</p>
+<!--fig:race-->
+<p>The HTTP responses in the chart are individually correct. The screen is wrong because it has forgotten which request represents the user’s current choice. A debounce reduces how often requests start, but it does not establish response ordering.</p>
+<h2>State the contract</h2>
+<p>Use a fresh increasing request ID whenever a search begins. <code>latest</code> records that ID, and <code>pending</code> contains requests whose responses can still arrive. The UI is a tagged record: idle has no request, loading identifies the current request, and ready contains its request and result. These variants rule out combinations such as idle = TRUE with resultsLoading = TRUE.</p>
+<p>The property is precise: whenever the UI is ready, it shows the result of <code>latest</code>. Compare the same delivery order with and without the guard.</p>
+<!--fig:buggy-->
+<!--fig:guarded-->
+<p>The two grids differ in one cell. We also clear the old view on Start on purpose. A product that keeps previous results while loading needs a different contract, such as a separate <code>displayedRequest</code> field and an explicit “updating” state.</p>
+<div class="lab" id="appstate-lab"><h2>Choose the response order</h2><div class="controls"><label><input type="checkbox" id="appstate-guard" checked>Accept only the latest request</label><button type="button" id="appstate-start-a">Search cats (1)</button><button type="button" id="appstate-start-b">Search dogs (2)</button><button type="button" id="appstate-finish-a">Deliver cats (1)</button><button type="button" id="appstate-finish-b">Deliver dogs (2)</button><button type="button" id="appstate-reset">Restart</button></div><div class="flow"><span class="node">User choice<small id="appstate-choice"></small></span><span class="arrow">→</span><span class="node">Screen<small id="appstate-screen"></small></span></div><div class="readout" id="appstate-log" aria-live="polite"></div></div>
+<h2>A complete bounded model</h2>
+<p>Save as <code>AppState.tla</code> for the real tools. There are two possible requests with fixed results. Start issues them in order, but Deliver may select either pending response. Errors, cancellation, and duplicated responses are omitted to isolate the stale-response race.</p>
+<pre><code>---------------- MODULE AppState ----------------
+EXTENDS Naturals
+VARIABLES latest, pending, ui
+vars == &lt;&lt;latest,pending,ui&gt;&gt;
+Requests == 1..2
+Query == [r \in Requests |-&gt;
+             IF r = 1 THEN "cats" ELSE "dogs"]
+UIStates ==
+    [tag : {"idle"}]
+    \cup [tag : {"loading"}, request : Requests]
+    \cup [tag : {"ready"}, request : Requests,
+          value : {"cats", "dogs"}]
+
+Init == /\ latest = 0
+        /\ pending = {}
+        /\ ui = [tag |-&gt; "idle"]
+Start ==
+    /\ latest &lt; 2
+    /\ LET r == latest + 1 IN
+           /\ latest' = r
+           /\ pending' = pending \cup {r}
+           /\ ui' = [tag |-&gt; "loading", request |-&gt; r]
+Deliver(r) ==
+    /\ r \in pending
+    /\ pending' = pending \ {r}
+    /\ UNCHANGED latest
+    /\ ui' = IF r = latest
+              THEN [tag |-&gt; "ready", request |-&gt; r,
+                    value |-&gt; Query[r]]
+              ELSE ui
+Next == Start \/ (\E r \in Requests: Deliver(r))
+Spec == Init /\ [][Next]_vars
+FairSpec == Spec /\ (\A r \in Requests: WF_vars(Deliver(r)))
+
+TypeOK == /\ latest \in 0..2
+          /\ pending \subseteq 1..latest
+          /\ ui \in UIStates
+CurrentView ==
+    IF ui.tag = "ready"
+    THEN /\ ui.request = latest
+         /\ ui.value = Query[latest]
+    ELSE TRUE
+Settles == (ui.tag = "loading") ~&gt; (ui.tag = "ready")
+=================================================</code></pre>
+<p>Start’s LET names the new request number; all three primed equations describe the same step. Deliver always removes the arriving request from <code>pending</code> but updates <code>ui</code> only if the ID still equals <code>latest</code>. <code>CurrentView</code> reads the tagged record’s fields only when they exist.</p>
+<pre><code>SPECIFICATION FairSpec
+INVARIANT TypeOK
+INVARIANT CurrentView
+PROPERTY Settles
+CHECK_DEADLOCK FALSE</code></pre>
+<p>TLC completes with 7 distinct states and 9 generated, with both invariants and <code>Settles</code> holding. That is small enough to draw completely.</p>
+<!--fig:space-->
+<p>Follow the two dashed arrows: they are the only places where a stale response arrives. Each changes <code>pending</code> and leaves <code>ui</code> alone. <code>Settles</code> uses fairness from {{lesson:fairness}}: each pending Deliver stays enabled until executed, and only two Start steps exist, so a current request cannot be postponed forever. Real applications cannot promise this over a permanently failed network; add error and timeout outcomes for their progress contract.</p>
+<h2>Make the bug appear</h2>
+<p>Replace the entire IF expression in Deliver with the ready record, unconditionally. Check <code>TypeOK</code> and <code>CurrentView</code> under <code>Spec</code>.</p>
+<details class="answer"><summary>Predict: does TLC need dogs to arrive first to break the view?</summary><p>No. TLC’s trace is shorter than the story: Start, Start, <code>Deliver(1)</code>. Cats arrives while dogs is still loading, and the screen shows ready 1 with <code>latest</code> = 2. The dogs-first order in the chart also fails, but the guard was never about dogs arriving. It was about any response that is not the latest.</p></details>
+<div class="quiz" data-answer="1" data-explain="Deliver(1) with latest = 2 removes 1 from pending while ui stays the same. Network bookkeeping can change while the visible state does not."><fieldset><legend>In the guarded model, what does a stale Deliver change?</legend><label><input type="radio" name="q-app-state" value="0">Nothing at all, so it is a stuttering step</label><label><input type="radio" name="q-app-state" value="1">pending, but not ui</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>The implementation boundary</h2>
+<pre><code>let latest = 0;
+let ui = { tag: "idle" };
+async function search(query) {
+  const request = ++latest;
+  ui = { tag: "loading", request };
+  render(ui);
+  try {
+    const value = await searchApi(query);
+    if (request !== latest) return;
+    ui = { tag: "ready", request, value };
+    render(ui);
+  } catch (error) {
+    if (request !== latest) return;
+    ui = { tag: "error", request, error };
+    render(ui);
+  }
+}</code></pre>
+<p>The synchronous increment and loading update correspond to Start. The await permits arbitrary interleaving. Checking the ID and committing the view form one synchronous callback segment with no await between them, which is why one Deliver step can stand for them. The error variant extends the small module; apply the same test to failures. Cancellation can save work, but correct ID handling must not assume cancellation always prevents a response.</p>
+<details class="answer"><summary>Predict: dogs fails, then the old cats request succeeds. Should cats replace the error?</summary><p>Under this contract, no. The latest user choice is still dogs. An old success and an old failure must both be rejected. To show fallback results intentionally, model that as an explicit product rule rather than letting callback order decide.</p></details>
+<p class="resources">Next, translate this into PlusCal as in {{lesson:pluscal}} and inspect its pc, or compare two UI implementations using {{lesson:refinement}}. Language reference: <a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/tla/book.html">Specifying Systems</a>.</p>

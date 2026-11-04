@@ -1,0 +1,562 @@
+<h1>Final problem set: the whole course, one system at a time.</h1>
+<p class="lead">This is the course's comprehensive exam. Five problems, each a real design, together use every part of the course: states and actions, sets and records, two-phase commit and messages, quorums and Raft, temporal properties and fairness, refinement, PlusCal, inductive invariants and symmetry, idempotency and fencing, and layered contracts. The last problem asks for all of it at once. Use {{ref:review}} to find your way back to anything you have forgotten.</p>
+<p>Every module is complete and was checked with TLC exactly as shown. Trace lengths come from TLC with one worker (<code>-workers 1</code>) and count the initial state. Before you run anything, write down what you expect: the point of an exam is to find out which predictions you can make without the tool.</p>
+<div class="table-wrap"><table><thead><tr><th>Problem</th><th>Main ideas</th><th>Course parts</th></tr></thead><tbody>
+<tr><td>1. Write skew</td><td>PlusCal, interleaving, invariants as search goals</td><td>Lectures 1–5, Beyond I</td></tr>
+<tr><td>2. Order saga</td><td>Messages, compensation versus two-phase commit, liveness</td><td>Lectures 4–6 and 9, Beyond III</td></tr>
+<tr><td>3. G-counter</td><td>Refinement, stuttering, convergence, recursion</td><td>Lectures 5 and 8–10, Beyond II</td></tr>
+<tr><td>4. Raft log</td><td>Sequences, quorums, symmetry</td><td>Lectures 7 and 9, Beyond II</td></tr>
+<tr><td>5. Capstone</td><td>Leases, fencing, outbox, fairness, refinement, inductive invariant</td><td>All of them</td></tr>
+</tbody></table></div>
+
+<article class="problem" id="ps-final-skew">
+<p class="problem-meta"><span>Problem 1</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">Databases</span></p>
+<h2>Two doctors go off call: write skew under snapshot isolation</h2>
+<p class="uses">Draws on {{ref:states}}, {{ref:sets}}, {{ref:tcommit}}, {{ref:inventory}} and {{ref:pluscal}}.</p>
+<p>A hospital's on-call app keeps one row per doctor per shift in Postgres, at the <code>REPEATABLE READ</code> isolation level, which Postgres implements as snapshot isolation. The rule is that at least one doctor stays on call. To go off call, the app runs one transaction: count the doctors on call in the shift; if there are at least two, set your own row to off call; commit. Alice and Bob both feel unwell and press the button at the same moment. Both transactions commit, and nobody is on call. Kleppmann's <em>Designing Data-Intensive Applications</em> uses this example.</p>
+<p>Under snapshot isolation each transaction reads from a snapshot taken when it starts, and two transactions conflict only if they write the same row. The PlusCal model has one process per doctor's transaction. <code>snap</code> is the transaction's snapshot and <code>version</code> counts commits per row. With <code>Isolation = "Serializable"</code>, a transaction aborts at commit if any row it read has changed since its snapshot. Translate the algorithm with <code>pcal.trans</code> before running TLC; the translation is omitted below.</p>
+<pre><code>---------------- MODULE PSfinal_OnCall ----------------
+EXTENDS Naturals, FiniteSets
+CONSTANTS Doctors, Isolation
+ASSUME Isolation \in {"Snapshot", "Serializable"}
+(*--algorithm OnCall
+variables onCall = [d \in Doctors |-&gt; TRUE],  \* committed rows
+          version = [d \in Doctors |-&gt; 0];     \* committed row versions
+define
+    AtLeastOneOnCall == \E d \in Doctors : onCall[d]
+end define;
+process Tx \in Doctors
+variables snap = [d \in Doctors |-&gt; TRUE],     \* this transaction's snapshot
+          snapVersion = [d \in Doctors |-&gt; 0];
+begin
+Begin:
+    snap := onCall;
+    snapVersion := version;
+Check:
+    if Cardinality({d \in Doctors : snap[d]}) &gt;= 2 then
+Commit:
+        if Isolation = "Serializable" /\ version # snapVersion then
+            skip;   \* abort: a row it read has changed since its snapshot
+        else
+            onCall[self] := FALSE;
+            version[self] := version[self] + 1;
+        end if;
+    end if;
+end process;
+end algorithm; *)
+=======================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Doctors = {alice, bob}
+          Isolation = "Snapshot"
+INVARIANT AtLeastOneOnCall</code></pre>
+<!--fig:skew-->
+<ol class="tasks">
+<li>Before running TLC: each transaction on its own preserves <code>AtLeastOneOnCall</code>. Which behaviors could break it? Answer in terms of states and steps.</li>
+<li>Run <code>Isolation = "Snapshot"</code> and report TLC's trace.</li>
+<li>Snapshot isolation does detect a write-write conflict, and the first transaction to commit wins. Why does that not stop this anomaly?</li>
+<li>Run <code>Isolation = "Serializable"</code>. Report the distinct states. Then explain how the model's rule relates to Postgres's <code>SERIALIZABLE</code> level, and what the application must do when a transaction is aborted.</li>
+</ol>
+<div class="numcheck" data-answer="7|seven" data-explain="Begin(alice), Check(alice), Begin(bob), Commit(alice), Check(bob), Commit(bob): six steps after the initial state. Bob's Check reads his snapshot, taken before Alice committed." data-retry="Count the initial state and both Commit steps."><label>Number of states in TLC's trace for <code>"Snapshot"</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="Each transaction writes only its own row, so there is no write-write conflict to detect. The conflict is between what one reads and what the other writes."><fieldset><legend>Which conflict does write skew consist of?</legend><label><input type="radio" name="q-ps-final-skew" value="0">Both transactions write the same row</label><label><input type="radio" name="q-ps-final-skew" value="1">Each transaction writes a row that the other one read</label><label><input type="radio" name="q-ps-final-skew" value="2">One transaction reads uncommitted data</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>{{ref:inventory}} had the same structure: a check, then an action based on it, with another process changing the facts in between. Here the database itself keeps the check's facts frozen, inside the snapshot.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>1.</strong> Only interleavings. Run alone, either transaction sees two doctors on call and leaves one. A bad behavior needs both checks to happen before either change becomes visible to the other.</p>
+<p><strong>2.</strong> <code>AtLeastOneOnCall</code> fails after 7 states: <code>Begin(alice)</code>, <code>Check(alice)</code> (2 on call), <code>Begin(bob)</code>, <code>Commit(alice)</code>, <code>Check(bob)</code>, <code>Commit(bob)</code>. Bob checks after Alice has committed, but he reads his snapshot, which was taken before her commit. The diagram shows the two snapshots disagreeing with the database.</p>
+<p><strong>3.</strong> The writes go to different rows, Alice's and Bob's, so first-committer-wins never fires. What makes the outcome wrong is that each transaction's decision depended on a row the other one changed. That read-write dependency is not something snapshot isolation tracks.</p>
+<p><strong>4.</strong> No error, 21 distinct states. In every interleaving where both have read the other's row before either commits, the second commit sees a changed version and aborts. The model's rule, validating the read set at commit, is a simple optimistic scheme, not Postgres's algorithm. Postgres's <code>SERIALIZABLE</code> uses serializable snapshot isolation: it tracks read-write dependencies among concurrent transactions and aborts one when they could form a cycle. In this example the effect is the same, one of the two fails with a serialization error. The application must be ready to retry the transaction from the start, and the retry will see one doctor on call and refuse. Another fix keeps <code>REPEATABLE READ</code> and makes the conflict a write conflict, for example by locking the shift's row before counting. This model does not check that variant.</p>
+<p>Note what the model left out: the number of doctors, other shifts, retries. Two processes and one invariant were enough to produce the bug, which is the reduction argument of {{ref:scaling}}.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-final-saga">
+<p class="problem-meta"><span>Problem 2</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Microservices</span></p>
+<h2>An order saga that refunds a charge that hasn't happened yet</h2>
+<p class="uses">Draws on {{ref:diehard-tlc}}, {{ref:transactions}}, {{ref:paxos-commit}}, {{ref:messages}}, {{ref:fairness}} and {{ref:idempotency}}.</p>
+<p>An order service runs a <em>saga</em>, a sequence of local transactions in different services, each with a compensating action that undoes it if a later step fails. Step 1 reserved the stock. Step 2 asks the payment service to charge the card. If the charge is declined, the compensation releases the stock and the order is cancelled. The payment service is sometimes slow, so after 30 seconds the order service gives up on the reply and compensates. Customers complain about being charged for cancelled orders.</p>
+<p>The team tries three designs for the timeout. <code>"ReleaseOnly"</code> releases the stock and cancels. <code>"Refund"</code> also sends a refund request. <code>"RefundTombstone"</code> sends the refund too, and the payment service records a refund for a charge it has not seen yet. That record makes a late charge request for the same order fail. The network is a set of messages that can arrive in any order. <code>Timeout</code> has no fairness: it may or may not happen, which is the environment's choice.</p>
+<pre><code>---------------- MODULE PSfinal_Saga ----------------
+CONSTANT Design
+ASSUME Design \in {"ReleaseOnly", "Refund", "RefundTombstone"}
+VARIABLES stock,  \* inventory service: "reserved" or "released"
+          pay,    \* payment service: "none", "charged", "declined",
+                  \*   "refunded" or "blocked" (a refund came first)
+          orch,   \* orchestrator: "charge", "wait", "done", "cancelled"
+          msgs    \* messages in flight
+vars == &lt;&lt;stock, pay, orch, msgs&gt;&gt;
+
+Init == /\ stock = "reserved"     \* step 1 of the saga has completed
+        /\ pay = "none"
+        /\ orch = "charge"
+        /\ msgs = {}
+
+\* Step 2: ask the payment service to charge the card.
+SendCharge == /\ orch = "charge"
+              /\ orch' = "wait"
+              /\ msgs' = msgs \cup {"charge"}
+              /\ UNCHANGED &lt;&lt;stock, pay&gt;&gt;
+
+\* The payment service handles the charge request.
+Reply(m) == msgs' = (msgs \ {"charge"}) \cup {m}
+Charge == /\ "charge" \in msgs
+          /\ \/ pay = "none" /\ pay' = "charged" /\ Reply("charged")
+             \/ pay = "none" /\ pay' = "declined" /\ Reply("declined")
+             \/ pay = "blocked" /\ UNCHANGED pay /\ Reply("declined")
+          /\ UNCHANGED &lt;&lt;stock, orch&gt;&gt;
+
+\* The orchestrator gets the outcome.
+Charged  == /\ "charged" \in msgs
+            /\ msgs' = msgs \ {"charged"}
+            /\ orch' = IF orch = "wait" THEN "done" ELSE orch
+            /\ UNCHANGED &lt;&lt;stock, pay&gt;&gt;
+Declined == /\ "declined" \in msgs
+            /\ msgs' = msgs \ {"declined"}
+            /\ IF orch = "wait"
+                  THEN orch' = "cancelled" /\ stock' = "released"
+                  ELSE UNCHANGED &lt;&lt;orch, stock&gt;&gt;
+            /\ UNCHANGED pay
+
+\* No reply yet: the orchestrator gives up and compensates.
+Timeout == /\ orch = "wait"
+           /\ orch' = "cancelled"
+           /\ stock' = "released"
+           /\ msgs' = IF Design = "ReleaseOnly" THEN msgs
+                      ELSE msgs \cup {"refund"}
+           /\ UNCHANGED pay
+
+\* The payment service handles a refund for this order.
+Refund == /\ "refund" \in msgs
+          /\ msgs' = msgs \ {"refund"}
+          /\ pay' = CASE pay = "charged" -&gt; "refunded"
+                      [] pay = "none" /\ Design = "RefundTombstone" -&gt; "blocked"
+                      [] OTHER -&gt; pay
+          /\ UNCHANGED &lt;&lt;stock, orch&gt;&gt;
+
+Next == SendCharge \/ Charge \/ Charged \/ Declined \/ Timeout \/ Refund
+Spec == Init /\ [][Next]_vars
+FairSpec == /\ Spec
+            /\ WF_vars(SendCharge) /\ WF_vars(Charge) /\ WF_vars(Charged)
+            /\ WF_vars(Declined) /\ WF_vars(Refund)
+
+\* What a finished order must look like.
+Settled == \/ orch = "done" /\ stock = "reserved" /\ pay = "charged"
+           \/ orch = "cancelled" /\ stock = "released" /\ pay # "charged"
+EventuallySettled == &lt;&gt;[]Settled
+\* A search goal: a quiet system with a paid, cancelled order.
+NoPaidCancelled == ~(orch = "cancelled" /\ pay = "charged" /\ msgs = {})
+\* "Never charged while the stock is released" (true of 2PC's outcome).
+NoChargedRelease == ~(pay = "charged" /\ stock = "released")
+======================================================</code></pre>
+<pre><code>SPECIFICATION FairSpec
+CONSTANT Design = "ReleaseOnly"
+PROPERTY EventuallySettled
+CHECK_DEADLOCK FALSE</code></pre>
+<!--fig:saga-->
+<ol class="tasks">
+<li>Run <code>"ReleaseOnly"</code> with <code>PROPERTY EventuallySettled</code>. Then use the Die Hard trick: check <code>INVARIANT NoPaidCancelled</code> under <code>Spec</code>. Compare the two runs.</li>
+<li>Run <code>"Refund"</code>. Why didn't the refund help?</li>
+<li>Run <code>"RefundTombstone"</code> and report the distinct states.</li>
+<li>Check <code>INVARIANT NoChargedRelease</code> on <code>"RefundTombstone"</code>. It fails. Is that a bug? Compare with what two-phase commit, as in {{ref:transactions}}, would guarantee, and say what it would cost here.</li>
+</ol>
+<div class="numcheck" data-answer="17|seventeen" data-explain="TLC finds 17 distinct states and no error: EventuallySettled holds under FairSpec." data-retry="Use FairSpec, Design = &quot;RefundTombstone&quot; and PROPERTY EventuallySettled."><label>Distinct states for <code>"RefundTombstone"</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="0" data-explain="The blocked state is a durable record keyed by the order that turns a later request with the same identity into a no-op: the idempotency-record idea, used to fence off a superseded operation."><fieldset><legend>Which earlier idea does the payment service's <code>"blocked"</code> state implement?</legend><label><input type="radio" name="q-ps-final-saga" value="0">A durable record keyed by the operation's identity that rejects a late duplicate, as with idempotency keys and fencing</label><label><input type="radio" name="q-ps-final-saga" value="1">A quorum, as in Paxos Commit</label><label><input type="radio" name="q-ps-final-saga" value="2">Weak fairness of the payment service</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>A timeout does not mean the request failed. It means the reply did not arrive in time. Ask what the request can still do after the timeout, and who can stop it.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>1.</strong> <code>EventuallySettled</code> fails: <code>SendCharge</code>, <code>Charge</code> (succeeds), <code>Timeout</code> (the reply is in flight; stock released), <code>Charged</code> (ignored, since the order is cancelled), then stuttering forever in a state with a paid, cancelled order. The invariant <code>NoPaidCancelled</code> describes that end state as a safety goal. TLC finds it in 5 states with the same steps, under <code>Spec</code>, with no fairness. Turning "this must not happen eventually" into "this state is never reached" made the check simpler, which is the trick of {{ref:diehard-tlc}}. It works when the bad outcome is a state the system cannot leave.</p>
+<p><strong>2.</strong> <code>"Refund"</code> fails differently: <code>SendCharge</code>, <code>Timeout</code> (refund sent while the charge request is still on the network), <code>Refund</code> (nothing to refund yet), <code>Charge</code> (succeeds), <code>Charged</code>. The refund and the charge were reordered, as {{ref:messages}} allows, and the refund of a charge that did not exist yet did nothing. The diagram draws this trace.</p>
+<p><strong>3.</strong> No error, 17 distinct states. The refund leaves a durable record, <code>"blocked"</code>, so the late charge is declined. In a real payment service, the charge and the refund both carry the order's ID, and the service keeps the ID's state, which is the idempotency record of {{ref:idempotency}}.</p>
+<p><strong>4.</strong> It fails after 4 states: <code>SendCharge</code>, <code>Charge</code>, <code>Timeout</code>. The card is charged while the stock is released, and the refund is still on its way. That is not a bug in a saga: a saga gives up isolation, so other observers can see intermediate states, and promises only that compensations eventually bring it to a consistent end. <code>EventuallySettled</code> states that promise. Two-phase commit would rule the intermediate state out. Both services would prepare and hold their resources, and a coordinator would decide. The cost is what {{ref:transactions}} and {{ref:paxos-commit}} showed: every participant must support a prepared state, resources stay locked while the decision is pending, and a coordinator failure can block them. An external payment provider is usually not a participant you can enlist in your own two-phase commit, which is one reason payment flows are often built as sagas.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-final-gcounter">
+<p class="problem-meta"><span>Problem 3</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Distributed data</span></p>
+<h2>A like counter on three continents</h2>
+<p class="uses">Draws on {{ref:sets}}, {{ref:temporal}}, {{ref:fairness}}, {{ref:refinement}} and {{ref:composition}}.</p>
+<p>A social app runs active replicas in three regions, and each region accepts likes locally. Replicas periodically send their whole state to each other and merge what they receive. The first design keeps one integer per region and merges with max, "because max never loses the bigger number". The second merges by adding. The third is a <em>G-counter</em>, a grow-only counter from the literature on conflict-free replicated data types (CRDTs). Each replica keeps a vector with one entry per replica, increments only its own entry, merges by taking the maximum of each entry, and displays the sum.</p>
+<pre><code>---------------- MODULE PSfinal_NaiveCounter ----------------
+EXTENDS Naturals
+CONSTANTS Replicas, MaxLikes, MergeRule
+ASSUME MergeRule \in {"Max", "Add"}
+VARIABLES n,      \* n[r]: the single number replica r stores
+          likes   \* history: likes actually taken, anywhere
+vars == &lt;&lt;n, likes&gt;&gt;
+Init == n = [r \in Replicas |-&gt; 0] /\ likes = 0
+Like(r) == /\ likes &lt; MaxLikes
+           /\ n' = [n EXCEPT ![r] = @ + 1]
+           /\ likes' = likes + 1
+Merge(r, s) == /\ r # s
+               /\ n' = [n EXCEPT ![r] = IF MergeRule = "Max"
+                          THEN (IF n[s] &gt; n[r] THEN n[s] ELSE n[r])
+                          ELSE n[r] + n[s]]
+               /\ UNCHANGED likes
+Next == \E r, s \in Replicas : Like(r) \/ Merge(r, s)
+Spec == Init /\ [][Next]_vars
+FairSpec == Spec /\ \A r, s \in Replicas : WF_vars(Merge(r, s))
+Bounded == \A r \in Replicas : n[r] &lt;= MaxLikes + 1   \* a CONSTRAINT for "Add"
+NeverOverCount == \A r \in Replicas : n[r] &lt;= likes
+Converges == &lt;&gt;[](\A r \in Replicas : n[r] = likes)
+=============================================================</code></pre>
+<pre><code>SPECIFICATION FairSpec
+CONSTANTS Replicas = {r1, r2}
+          MaxLikes = 2
+          MergeRule = "Max"
+INVARIANT NeverOverCount
+PROPERTY Converges
+CHECK_DEADLOCK FALSE</code></pre>
+<p>The G-counter is checked against a one-variable contract, a counter like the one in {{ref:counter}}, written as a module of its own. The mapping says the contract's <code>count</code> is the sum of each replica's own entry.</p>
+<pre><code>---------------- MODULE PSfinal_Counter ----------------
+EXTENDS Naturals
+VARIABLE count          \* likes on one post: the contract
+Init == count = 0
+Next == count' = count + 1
+Spec == Init /\ [][Next]_count
+=========================================================</code></pre>
+<pre><code>---------------- MODULE PSfinal_GCounter ----------------
+EXTENDS Naturals
+CONSTANTS Replicas, MaxLikes
+VARIABLE c   \* c[r][s]: what replica r knows of the likes taken at s
+vars == c
+
+RECURSIVE SumOver(_, _)
+SumOver(f, S) == IF S = {} THEN 0
+                 ELSE LET x == CHOOSE x \in S : TRUE
+                      IN  f[x] + SumOver(f, S \ {x})
+Value(r) == SumOver(c[r], Replicas)        \* what replica r displays
+Total == SumOver([s \in Replicas |-&gt; c[s][s]], Replicas)
+
+Init == c = [r \in Replicas |-&gt; [s \in Replicas |-&gt; 0]]
+
+\* A like arrives at replica r; it counts it in its own entry.
+Like(r) == /\ Total &lt; MaxLikes
+           /\ c' = [c EXCEPT ![r][r] = @ + 1]
+
+\* Replica r receives s's state and takes the entrywise maximum.
+Merge(r, s) == c' = [c EXCEPT ![r] = [x \in Replicas |-&gt;
+                         IF c[s][x] &gt; c[r][x] THEN c[s][x] ELSE c[r][x]]]
+
+Next == \E r, s \in Replicas : Like(r) \/ Merge(r, s)
+Spec == Init /\ [][Next]_vars
+FairSpec == Spec /\ \A r, s \in Replicas : WF_vars(Merge(r, s))
+
+NeverOverCount == \A r \in Replicas : Value(r) &lt;= Total
+OwnEntryLargest == \A r, s \in Replicas : c[s][r] &lt;= c[r][r]
+Converges == &lt;&gt;[](\A r \in Replicas : Value(r) = Total)
+
+Contract == INSTANCE PSfinal_Counter WITH count &lt;- Total
+Refines == Contract!Spec
+==========================================================</code></pre>
+<pre><code>SPECIFICATION FairSpec
+CONSTANTS Replicas = {r1, r2, r3}
+          MaxLikes = 3
+INVARIANT NeverOverCount
+INVARIANT OwnEntryLargest
+PROPERTY Converges
+PROPERTY Refines
+CHECK_DEADLOCK FALSE</code></pre>
+<!--fig:gcounter-->
+<ol class="tasks">
+<li>Run the naive counter with <code>MergeRule = "Max"</code>. Read the counterexample. After two likes in different regions, what value do the replicas settle on?</li>
+<li>Run <code>MergeRule = "Add"</code> with <code>SPECIFICATION Spec</code>, <code>INVARIANT NeverOverCount</code> and <code>CONSTRAINT Bounded</code>. Why must a merge be idempotent?</li>
+<li>Run the G-counter configuration. Report the result, and explain why every <code>Merge</code> step is a stuttering step of the contract. Which invariant does that argument need?</li>
+<li>A colleague maps the contract to what one replica displays: <code>count &lt;- Value(r)</code> for a fixed replica r. Predict what TLC reports, then check it.</li>
+</ol>
+<div class="numcheck" data-answer="1|one" data-explain="r2 and r1 each take one like, so both hold 1. Max-merging 1 with 1 gives 1, so every Merge is a stuttering step and the replicas stay at 1 forever, with likes = 2." data-retry="Each replica counted one like locally. What is max(1, 1)?"><label>Value both replicas settle on in task 1 <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="2" data-explain="The mapped count jumps from 0 to 2 in one Merge step when the watched replica learns two likes at once. The contract's Next only allows steps of +1."><fieldset><legend>Why does the mapping <code>count &lt;- Value(r)</code> fail?</legend><label><input type="radio" name="q-ps-final-gcounter" value="0">Value(r) can go down</label><label><input type="radio" name="q-ps-final-gcounter" value="1">Value(r) can exceed the number of likes</label><label><input type="radio" name="q-ps-final-gcounter" value="2">One merge can raise Value(r) by more than 1</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>A merge function's input may include information the receiver already has. Ask what happens if the same state arrives twice, and whether the merge can tell two different likes from one like seen twice.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>1.</strong> <code>Converges</code> fails: <code>Like(r2)</code>, <code>Like(r1)</code>, then stuttering, with <code>n = (r1 :&gt; 1 @@ r2 :&gt; 1)</code> and <code>likes = 2</code>. The replicas agree, on 1. Weak fairness forces every merge that is enabled, but a merge of 1 with 1 changes nothing, so it is a stuttering step and fairness asks for nothing more. Max cannot tell two different likes from one like seen twice. Convergence to the wrong value is not convergence.</p>
+<p><strong>2.</strong> <code>NeverOverCount</code> fails after 4 states: <code>Like(r1)</code>, <code>Merge(r2, r1)</code>, <code>Merge(r2, r1)</code>, with r2 showing 2 after one like. Gossip delivers the same state many times, as messages in {{ref:messages}} could be duplicated. So a merge must be idempotent, as well as commutative and associative, because states arrive in any order and grouping. Max on each entry has all three properties. Addition is not idempotent.</p>
+<p><strong>3.</strong> No error, 414 distinct states. <code>NeverOverCount</code> and <code>OwnEntryLargest</code> hold, <code>Converges</code> holds under the merge fairness, and so does <code>Refines</code>. A <code>Like(r)</code> adds 1 to <code>c[r][r]</code> and so to <code>Total</code>: an abstract <code>Next</code> step. A <code>Merge(r, s)</code> sets <code>c[r][r]</code> to the larger of <code>c[r][r]</code> and <code>c[s][r]</code>, which is <code>c[r][r]</code> because of <code>OwnEntryLargest</code>: only r ever increments its own entry, so no one knows more about it than r. Every own entry is unchanged, so <code>Total</code> is unchanged and the step stutters, as in {{ref:implementation}}. This is how refinement uses an invariant: the mapping is only correct in reachable states.</p>
+<p><strong>4.</strong> TLC reports the contract's action property violated after 4 states: <code>Like(r2)</code>, <code>Like(r2)</code>, then a <code>Merge</code> into the watched replica, whose display jumps from 0 to 2. The contract allows only steps of 1 (the replica TLC watches is <code>CHOOSE r \in Replicas : TRUE</code>, so your run may name a different one). The display is a lagging view of the counter, not the counter. A contract for it would be weaker: never more than <code>Total</code>, never decreasing, eventually equal.</p>
+<pre><code>---------------- MODULE PSfinal_GCounterMap ----------------
+EXTENDS PSfinal_GCounter
+\* A different mapping: the contract's count is what one replica displays.
+Watched == CHOOSE r \in Replicas : TRUE
+Displayed == INSTANCE PSfinal_Counter WITH count &lt;- Value(Watched)
+RefinesDisplayed == Displayed!Spec
+=============================================================</code></pre>
+</details>
+</article>
+
+<article class="problem" id="ps-final-raft">
+<p class="problem-meta"><span>Problem 4</span><span class="level" title="Difficulty 3 of 3">●●●</span><span class="domain">Consensus</span></p>
+<h2>Why a Raft follower checks the previous entry</h2>
+<p class="uses">Draws on {{ref:replication}}, {{ref:consensus}}, {{ref:abspec}}, {{ref:scaling}} and {{ref:ps-l7}}.</p>
+<p>A team is building a metadata service on a Raft-style replicated log. Each log entry records the term of the leader that created it. A leader sends a follower the entry at index i + 1 together with the index i and term of the entry before it, and the follower accepts only if its own entry i has that term. The Raft paper calls the resulting guarantee <em>Log Matching</em>: if two logs contain an entry with the same index and term, the logs are identical up to that index. A refactoring "optimizes" the follower by dropping the check.</p>
+<p>The model abstracts elections: <code>Elect(s, t)</code> makes s leader of a newer term, and <code>OneLeaderPerTerm</code> says whether two servers can win the same term. Real Raft gets that from votes, as you saw in {{ref:ps-l7}}. <code>AppendEntries</code> is one atomic step from leader to follower. As a simplification, the follower always cuts its log after the new entry, where Raft deletes entries only on a conflict. That is harmless for Log Matching, but it would not be for a property about committed entries.</p>
+<pre><code>---------------- MODULE PSfinal_RaftLog ----------------
+EXTENDS Naturals, Sequences
+CONSTANTS Servers, MaxTerm, MaxLen, PrevCheck, OneLeaderPerTerm
+ASSUME PrevCheck \in BOOLEAN /\ OneLeaderPerTerm \in BOOLEAN
+Terms == 1..MaxTerm
+VARIABLES term,     \* term[s]: the latest term server s knows
+          leaders,  \* leaders[t]: servers elected leader in term t
+          log       \* log[s]: the term of each entry, in index order
+vars == &lt;&lt;term, leaders, log&gt;&gt;
+
+Init == /\ term = [s \in Servers |-&gt; 0]
+        /\ leaders = [t \in Terms |-&gt; {}]
+        /\ log = [s \in Servers |-&gt; &lt;&lt;&gt;&gt;]
+
+\* Elections are abstracted: s wins term t, a term newer than its own.
+Elect(s, t) == /\ t &gt; term[s]
+               /\ OneLeaderPerTerm =&gt; leaders[t] = {}
+               /\ leaders' = [leaders EXCEPT ![t] = @ \cup {s}]
+               /\ term' = [term EXCEPT ![s] = t]
+               /\ UNCHANGED log
+
+IsLeader(s) == term[s] &gt; 0 /\ s \in leaders[term[s]]
+
+\* A leader appends a client command, tagged with its term, to its own log.
+ClientRequest(s) == /\ IsLeader(s)
+                    /\ Len(log[s]) &lt; MaxLen
+                    /\ log' = [log EXCEPT ![s] = Append(@, term[s])]
+                    /\ UNCHANGED &lt;&lt;term, leaders&gt;&gt;
+
+\* Leader l sends f entry i+1, with prevLogIndex i and prevLogTerm log[l][i].
+\* f accepts if l's term is not older than f's and (with PrevCheck) f's
+\* entry i has that term. f keeps entries 1..i, then takes entry i+1.
+AppendEntries(l, f, i) ==
+    /\ l # f /\ IsLeader(l)
+    /\ term[l] &gt;= term[f]
+    /\ i &lt; Len(log[l]) /\ i &lt;= Len(log[f])
+    /\ PrevCheck =&gt; IF i = 0 THEN TRUE ELSE log[f][i] = log[l][i]
+    /\ log' = [log EXCEPT ![f] = [j \in 1..(i + 1) |-&gt;
+                   IF j &lt;= i THEN log[f][j] ELSE log[l][i + 1]]]
+    /\ term' = [term EXCEPT ![f] = term[l]]
+    /\ UNCHANGED leaders
+
+Next == \/ \E s \in Servers, t \in Terms : Elect(s, t)
+        \/ \E s \in Servers : ClientRequest(s)
+        \/ \E l, f \in Servers, i \in 0..(MaxLen - 1) : AppendEntries(l, f, i)
+Spec == Init /\ [][Next]_vars
+
+\* Log Matching: same index and term =&gt; identical logs up to that index.
+LogMatching ==
+    \A s, u \in Servers : \A i \in 1..MaxLen :
+        (i &lt;= Len(log[s]) /\ i &lt;= Len(log[u]) /\ log[s][i] = log[u][i])
+            =&gt; \A j \in 1..i : log[s][j] = log[u][j]
+=========================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Servers = {s1, s2, s3}
+          MaxTerm = 2
+          MaxLen = 2
+          PrevCheck = TRUE
+          OneLeaderPerTerm = TRUE
+INVARIANT LogMatching
+CHECK_DEADLOCK FALSE</code></pre>
+<!--fig:logs-->
+<ol class="tasks">
+<li>Run the configuration shown and report the distinct states.</li>
+<li>Set <code>PrevCheck = FALSE</code>. Draw the logs in each state of TLC's trace and explain the violation.</li>
+<li>Restore the check and set <code>OneLeaderPerTerm = FALSE</code>. Explain the trace. Which fact about quorums rules this out in real Raft?</li>
+<li>The servers are interchangeable. Write a module that extends <code>PSfinal_RaftLog</code> and <code>TLC</code> and defines <code>Perms == Permutations(Servers)</code>, add <code>SYMMETRY Perms</code>, and rerun task 1. Why is the reduction sound for this property, and why would you hesitate to use it for a liveness property?</li>
+<li>Explain in a few sentences why the check makes Log Matching hold: argue by induction on the steps, as in {{ref:invariants}}.</li>
+</ol>
+<div class="numcheck" data-answer="7|seven" data-explain="Elect(s1,1), Elect(s2,2), ClientRequest(s1), ClientRequest(s2) twice, AppendEntries(s2,s1,1): six steps after the initial state. s1 keeps its term-1 entry at index 1 and takes s2's term-2 entry at index 2." data-retry="Count the initial state. The violating step is the single AppendEntries at the end."><label>Number of states in TLC's trace for <code>PrevCheck = FALSE</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="TLC's trace has s1 and s2 both leading term 2 and each appending a term-2 entry at index 2, with different entries at index 1. One term must have one leader so that (index, term) names one entry."><fieldset><legend>With the check but two leaders per term, what breaks Log Matching?</legend><label><input type="radio" name="q-ps-final-raft" value="0">A follower accepts an entry from an older term</label><label><input type="radio" name="q-ps-final-raft" value="1">Two leaders create different entries with the same index and term</label><label><input type="radio" name="q-ps-final-raft" value="2">A leader overwrites its own log</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Log Matching has two halves. An (index, term) pair must name a single entry, and the entries before it must agree. Each half is protected by a different mechanism; break one at a time.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>1.</strong> No error, 793 distinct states.</p>
+<p><strong>2.</strong> <code>LogMatching</code> fails after 7 states: <code>Elect(s1, 1)</code>, <code>Elect(s2, 2)</code>, <code>ClientRequest(s1)</code> (s1's log is &lt;&lt;1&gt;&gt;), <code>ClientRequest(s2)</code> twice (s2's log is &lt;&lt;2, 2&gt;&gt;), then <code>AppendEntries(s2, s1, 1)</code>. s2 sends its entry 2 with previous term 2, s1's entry 1 has term 1, and without the check s1 keeps it and appends: &lt;&lt;1, 2&gt;&gt;. Now s1 and s2 both have term 2 at index 2 but differ at index 1. The diagram shows the logs. Any later reasoning that "same index and term means same history", which Raft's commit rule depends on, is wrong for this pair.</p>
+<p><strong>3.</strong> <code>LogMatching</code> fails after 8 states: <code>Elect(s1, 1)</code>, <code>Elect(s2, 2)</code>, <code>ClientRequest(s1)</code>, <code>Elect(s1, 2)</code> (a second leader of term 2), <code>ClientRequest(s1)</code> gives &lt;&lt;1, 2&gt;&gt;, and <code>ClientRequest(s2)</code> twice gives &lt;&lt;2, 2&gt;&gt;. No message was needed. In Raft a candidate needs votes from a majority, and each server votes at most once per term. Two majorities of the same servers intersect, as in {{ref:replication}}, so two leaders of one term would need some server to vote twice.</p>
+<p><strong>4.</strong> With <code>SYMMETRY Perms</code>: no error, 148 distinct states instead of 793.</p>
+<pre><code>---------------- MODULE PSfinal_RaftLogSym ----------------
+EXTENDS PSfinal_RaftLog, TLC
+Perms == Permutations(Servers)
+============================================================</code></pre>
+<p>The reduction is sound here because no definition singles out a server: <code>Init</code>, <code>Next</code> and <code>LogMatching</code> treat every server alike, so a permuted state violates the invariant exactly when the original does. {{ref:scaling}} warns against combining symmetry with liveness checks unless your tools and reasoning explicitly support it, so run liveness checks without it.</p>
+<p><strong>5.</strong> Suppose Log Matching holds before a step. <code>ClientRequest</code> appends an entry whose term is the leader's current term at a new index. No other log has an entry with that term at that index, because one leader creates all of a term's entries and it never overwrites its own. So the new entry matches nothing yet. <code>AppendEntries(l, f, i)</code> gives f the prefix up to i only if f's entry i has the same term as l's. By the hypothesis, f's prefix through i equals l's. The new entry i + 1 is l's, so f's new log is a prefix of l's, and every pair involving f reduces to a pair involving l. Making this into a checked inductive invariant needs extra facts, such as that each term's entries appear in that term's leader's log. Finding them is the work {{ref:invariants}} describes.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-final-capstone">
+<p class="problem-meta"><span>Problem 5</span><span class="level" title="Difficulty 3 of 3">●●●</span><span class="domain">Infrastructure</span></p>
+<h2>Capstone: a job scheduler that sends each invoice exactly once</h2>
+<p class="uses">Synthesis of the whole course. Draws on {{ref:fencing}}, {{ref:idempotency}}, {{ref:fairness}}, {{ref:refinement}}, {{ref:invariants}}, {{ref:capstone}} and {{ref:ps-b3}}.</p>
+<p>A billing platform runs one job per customer each month. The job computes the invoice, writes it to storage, and queues the invoice email. A scheduler leases each job to one worker at a time and issues an increasing fencing token per job with each lease. Workers can pause past their lease's expiry, and they can crash. The worker writes the output, then runs one storage transaction that marks the job done and inserts an outbox row for the email, as in the outbox problem of {{ref:ps-b3}}. The product requirement is that every customer eventually gets exactly one invoice, built from the output of the run that committed it.</p>
+<p>Three designs differ only in storage's checks. <code>"LeaseOnly"</code> trusts the lease: storage checks nothing. <code>"DedupOnly"</code> refuses to commit a job already done. <code>"Fenced"</code> also refuses a write or a commit whose token is below the job's fence, and refuses writes to a finished job. Expiries and crashes are bounded to keep the model finite. <code>Reap</code> frees the lease of a worker that crashed, and has fairness, because a lease always runs out eventually. The contract, <code>PSfinal_Jobs</code>, sends each job's invoice once, eventually.</p>
+<pre><code>---------------- MODULE PSfinal_Jobs ----------------
+EXTENDS Naturals
+CONSTANT Jobs
+VARIABLE invoiced      \* invoiced[j]: invoices sent for job j
+Init == invoiced = [j \in Jobs |-&gt; 0]
+\* The contract: each job's invoice goes out once, in one step.
+Finish(j) == /\ invoiced[j] = 0
+             /\ invoiced' = [invoiced EXCEPT ![j] = 1]
+Next == \E j \in Jobs : Finish(j)
+Spec == Init /\ [][Next]_invoiced /\ WF_invoiced(Next)
+======================================================</code></pre>
+<pre><code>---------------- MODULE PSfinal_Scheduler ----------------
+EXTENDS Naturals
+CONSTANTS Workers, Jobs, Design, MaxExpiries, MaxCrashes
+ASSUME Design \in {"LeaseOnly", "DedupOnly", "Fenced"}
+VARIABLES lease,     \* lease[j]: the worker holding j's lease, or "none"
+          issued,    \* issued[j]: the last fencing token issued for j
+          wpc,       \* wpc[w]: "idle", "run" or "wrote" (volatile)
+          wjob,      \* wjob[w]: the job w is running
+          wtok,      \* wtok[w]: the token w received with its lease
+          output,    \* storage: output[j] = token of the run that wrote it
+          fence,     \* storage: fence[j] = highest token accepted for j
+          done,      \* storage: jobs committed as finished
+          doneTok,   \* storage: doneTok[j] = token of the committing run
+          invoices,  \* outbox rows: invoices[j] = invoices queued for j
+          expiries,  \* lease expiries so far (the holder is still alive)
+          crashes    \* worker crashes so far
+vars == &lt;&lt;lease, issued, wpc, wjob, wtok, output, fence, done, doneTok,
+          invoices, expiries, crashes&gt;&gt;
+
+MaxTok == 1 + MaxExpiries + MaxCrashes  \* enough for every run allowed
+
+Init == /\ lease = [j \in Jobs |-&gt; "none"]
+        /\ issued = [j \in Jobs |-&gt; 0]
+        /\ wpc = [w \in Workers |-&gt; "idle"]
+        /\ wjob = [w \in Workers |-&gt; CHOOSE j \in Jobs : TRUE]
+        /\ wtok = [w \in Workers |-&gt; 0]
+        /\ output = [j \in Jobs |-&gt; 0]
+        /\ fence = [j \in Jobs |-&gt; 0]
+        /\ done = {}
+        /\ doneTok = [j \in Jobs |-&gt; 0]
+        /\ invoices = [j \in Jobs |-&gt; 0]
+        /\ expiries = 0
+        /\ crashes = 0
+
+Storage == &lt;&lt;output, fence, done, doneTok, invoices&gt;&gt;
+
+\* The scheduler leases an unfinished job to an idle worker, with a token.
+Acquire(w, j) == /\ wpc[w] = "idle" /\ lease[j] = "none" /\ j \notin done
+                 /\ issued[j] &lt; MaxTok
+                 /\ lease' = [lease EXCEPT ![j] = w]
+                 /\ issued' = [issued EXCEPT ![j] = @ + 1]
+                 /\ wpc' = [wpc EXCEPT ![w] = "run"]
+                 /\ wjob' = [wjob EXCEPT ![w] = j]
+                 /\ wtok' = [wtok EXCEPT ![w] = issued[j] + 1]
+                 /\ UNCHANGED &lt;&lt;Storage, expiries, crashes&gt;&gt;
+
+\* The worker stops; it gives the lease back if it still holds it.
+Stop(w) == /\ wpc' = [wpc EXCEPT ![w] = "idle"]
+           /\ lease' = IF lease[wjob[w]] = w
+                          THEN [lease EXCEPT ![wjob[w]] = "none"] ELSE lease
+
+\* The worker writes the job's output to storage.
+Write(w) == LET j == wjob[w] IN
+    /\ wpc[w] = "run"
+    /\ IF Design = "Fenced" /\ (j \in done \/ wtok[w] &lt; fence[j])
+          THEN /\ Stop(w)                      \* storage refused
+               /\ UNCHANGED &lt;&lt;output, fence&gt;&gt;
+          ELSE /\ output' = [output EXCEPT ![j] = wtok[w]]
+               /\ fence' = [fence EXCEPT ![j] = IF wtok[w] &gt; @ THEN wtok[w] ELSE @]
+               /\ wpc' = [wpc EXCEPT ![w] = "wrote"]
+               /\ UNCHANGED lease
+    /\ UNCHANGED &lt;&lt;issued, wjob, wtok, done, doneTok, invoices, expiries, crashes&gt;&gt;
+
+\* One storage transaction marks the job done and queues the invoice.
+Commit(w) == LET j == wjob[w] IN
+    /\ wpc[w] = "wrote"
+    /\ Stop(w)
+    /\ IF \/ Design # "LeaseOnly" /\ j \in done
+          \/ Design = "Fenced" /\ wtok[w] # fence[j]
+          THEN UNCHANGED &lt;&lt;done, doneTok, invoices&gt;&gt;   \* refused
+          ELSE /\ done' = done \cup {j}
+               /\ doneTok' = [doneTok EXCEPT ![j] = wtok[w]]
+               /\ invoices' = [invoices EXCEPT ![j] = @ + 1]
+    /\ UNCHANGED &lt;&lt;issued, wjob, wtok, output, fence, expiries, crashes&gt;&gt;
+
+\* The lease runs out while its holder is alive but paused.
+Expire(j) == /\ lease[j] # "none" /\ expiries &lt; MaxExpiries
+             /\ lease' = [lease EXCEPT ![j] = "none"]
+             /\ expiries' = expiries + 1
+             /\ UNCHANGED &lt;&lt;issued, wpc, wjob, wtok, Storage, crashes&gt;&gt;
+
+\* A worker crashes; its lease stays until Reap.
+Crash(w) == /\ wpc[w] # "idle" /\ crashes &lt; MaxCrashes
+            /\ wpc' = [wpc EXCEPT ![w] = "idle"]
+            /\ crashes' = crashes + 1
+            /\ UNCHANGED &lt;&lt;lease, issued, wjob, wtok, Storage, expiries&gt;&gt;
+
+\* The lease of a worker that is no longer running the job runs out.
+Reap(j) == /\ lease[j] # "none"
+           /\ LET w == lease[j] IN wpc[w] = "idle" \/ wjob[w] # j
+           /\ lease' = [lease EXCEPT ![j] = "none"]
+           /\ UNCHANGED &lt;&lt;issued, wpc, wjob, wtok, Storage, expiries, crashes&gt;&gt;
+
+Next == \/ \E w \in Workers, j \in Jobs : Acquire(w, j)
+        \/ \E w \in Workers : Write(w) \/ Commit(w) \/ Crash(w)
+        \/ \E j \in Jobs : Expire(j) \/ Reap(j)
+Spec == Init /\ [][Next]_vars
+FairSpec == /\ Spec
+            /\ \A j \in Jobs : WF_vars(\E w \in Workers : Acquire(w, j))
+                               /\ WF_vars(Reap(j))
+            /\ \A w \in Workers : WF_vars(Write(w)) /\ WF_vars(Commit(w))
+
+OneInvoice == \A j \in Jobs : invoices[j] &lt;= 1
+OutputOfCommitter == \A j \in done : output[j] = doneTok[j]
+Contract == INSTANCE PSfinal_Jobs WITH invoiced &lt;- invoices
+Refines == Contract!Spec
+===========================================================</code></pre>
+<pre><code>SPECIFICATION FairSpec
+CONSTANTS Workers = {w1, w2}
+          Jobs = {j1}
+          Design = "Fenced"
+          MaxExpiries = 1
+          MaxCrashes = 1
+INVARIANT OneInvoice
+INVARIANT OutputOfCommitter
+PROPERTY Refines
+CHECK_DEADLOCK FALSE</code></pre>
+<p>For task 4, this module adds a type invariant, a first guess at an inductive invariant, and a stronger candidate. It also defines a specification with no fairness for <code>Reap</code>.</p>
+<pre><code>---------------- MODULE PSfinal_SchedulerInd ----------------
+EXTENDS PSfinal_Scheduler
+\* Fairness without Reap: a crashed worker's lease never runs out.
+NoReapSpec == /\ Spec
+              /\ \A j \in Jobs : WF_vars(\E w \in Workers : Acquire(w, j))
+              /\ \A w \in Workers : WF_vars(Write(w)) /\ WF_vars(Commit(w))
+
+TypeOK == /\ lease \in [Jobs -&gt; Workers \cup {"none"}]
+          /\ issued \in [Jobs -&gt; 0..MaxTok]
+          /\ wpc \in [Workers -&gt; {"idle", "run", "wrote"}]
+          /\ wjob \in [Workers -&gt; Jobs]
+          /\ wtok \in [Workers -&gt; 0..MaxTok]
+          /\ fence \in [Jobs -&gt; 0..MaxTok]
+          /\ output \in [Jobs -&gt; 0..MaxTok]
+          /\ done \in SUBSET Jobs
+          /\ doneTok \in [Jobs -&gt; 0..MaxTok]
+          /\ invoices \in [Jobs -&gt; 0..2]
+          /\ expiries \in 0..MaxExpiries
+          /\ crashes \in 0..MaxCrashes
+\* A first guess: the two safety properties themselves.
+Guess == TypeOK /\ OneInvoice /\ OutputOfCommitter
+\* The candidate inductive invariant (for Design = "Fenced").
+Inv == /\ TypeOK
+       /\ \A j \in Jobs : output[j] = fence[j]
+       /\ \A j \in done : doneTok[j] = fence[j]
+       /\ \A j \in Jobs : invoices[j] = IF j \in done THEN 1 ELSE 0
+=============================================================</code></pre>
+<pre><code>INIT Guess
+NEXT Next
+CONSTANTS Workers = {w1, w2}
+          Jobs = {j1}
+          Design = "Fenced"
+          MaxExpiries = 1
+          MaxCrashes = 1
+INVARIANT Guess
+CHECK_DEADLOCK FALSE</code></pre>
+<!--fig:sched-->
+<ol class="tasks">
+<li><strong>Safety.</strong> Run <code>"LeaseOnly"</code> and <code>"DedupOnly"</code> with both invariants. For each, say which fails and tell the story of TLC's trace. Which earlier lesson's fix does each design lack?</li>
+<li><strong>Refinement and liveness.</strong> Run the configuration shown, then with <code>Jobs = {j1, j2}</code>. Then check <code>Refines</code> on <code>"DedupOnly"</code>. It passes. What does that tell you about the contract?</li>
+<li><strong>Fairness.</strong> Check <code>Refines</code> under <code>NoReapSpec</code> on the fenced design. Explain the counterexample and name the real mechanism that <code>WF_vars(Reap(j))</code> stands for.</li>
+<li><strong>Inductive invariant.</strong> Run the <code>Guess</code> configuration and explain the counterexample to induction. Then check <code>Inv</code> the same way. Finally, argue by hand that <code>Inv</code> implies both safety properties and that <code>Init</code> implies <code>Inv</code>.</li>
+<li><strong>Review.</strong> List the assumptions this model makes that a real deployment must provide, in the spirit of {{ref:capstone}}'s rubric.</li>
+</ol>
+<div class="numcheck" data-answer="163|one hundred sixty-three|one hundred sixty three" data-explain="TLC finds 163 distinct states and no error for the fenced design with one job: both invariants hold and the scheduler refines PSfinal_Jobs, liveness included." data-retry="Use FairSpec, Design = &quot;Fenced&quot;, Jobs = {j1}, two workers, one expiry and one crash."><label>Distinct states for the fenced design with <code>Jobs = {j1}</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="The counterexample starts in a state with an invoice queued but the job not done, which no behavior reaches. Commit then queues a second invoice. The guess is true of reachable states but does not relate invoices to done, so it cannot explain itself."><fieldset><legend>TLC reports <code>Guess</code> violated. What does that show?</legend><label><input type="radio" name="q-ps-final-capstone" value="0">The fenced scheduler can send two invoices</label><label><input type="radio" name="q-ps-final-capstone" value="1">The guess is too weak to be inductive; the start state is unreachable</label><label><input type="radio" name="q-ps-final-capstone" value="2">The type invariant is wrong</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>For task 1, follow the worker whose lease expired: what can it still do, and what does storage know about it? For task 4, find a variable in the counterexample's first state that disagrees with another one in a way no behavior could produce, and write that relation down as a conjunct.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>1.</strong> <code>"LeaseOnly"</code> fails <code>OneInvoice</code> after 8 states. w1 acquires j1 with token 1 and writes the output. Its lease expires while it is paused. w2 acquires with token 2. w1 commits: done, one invoice. w2 writes and commits: a second invoice. Storage trusted a lease that had already ended. That is the fencing problem, and checking nothing also loses idempotency. <code>"DedupOnly"</code> passes <code>OneInvoice</code> but fails <code>OutputOfCommitter</code> after 7 states, the same steps up to w1's commit and then w2's write. The job is done with token 1, but the stored output now comes from run 2. The invoice email describes one computation and storage holds another. Deduplication from {{ref:idempotency}} stopped the second commit, but only fencing from {{ref:fencing}} stops the stale run's write. The diagram draws this trace. In <code>"Fenced"</code>, w2's write is refused because the job is done; if w2 had written first, w1's commit would have been refused instead, since its token would be below the fence.</p>
+<p><strong>2.</strong> No error: 163 distinct states with one job, 2189 with two. <code>Refines</code> checks the contract's whole formula, including <code>WF_invoiced(Next)</code>, so it checks that every invoice is eventually sent, not just that none is sent twice. <code>"DedupOnly"</code> also refines the contract (207 distinct states), although its invoice can describe the wrong output. The contract says nothing about which output; a passing refinement is only as strong as the contract. Either add the output to the contract or keep <code>OutputOfCommitter</code> as a separate checked property.</p>
+<p><strong>3.</strong> <code>Refines</code> fails. w1 acquires; its lease expires; w2 acquires, writes, and crashes, and w2's lease stays held. w1 resumes, its write is refused (token 1 is below fence 2), and then the system stutters forever: j1 is not done, no one can acquire it, and the invoice never goes out. <code>WF_vars(Reap(j))</code> stands for lease expiry: a crashed holder's lease runs out because the lock service's clock keeps moving. That is the time assumption {{ref:fencing}} told you to make explicit. Safety never depended on it; liveness does.</p>
+<p><strong>4.</strong> <code>Guess</code> fails from an unreachable state: <code>invoices[j1] = 1</code> while <code>done = {}</code> and w2 is about to commit, so <code>Commit(w2)</code> makes the count 2. The missing fact is that invoices and done move together, and similarly that the stored output always belongs to the fence's token. <code>Inv</code> says exactly that. Starting from every state that satisfies it, TLC finds no error (138,240 distinct states), so it is inductive for these constants. By hand: <code>Init</code> has every count, token and fence at 0 and nothing done, so it satisfies <code>Inv</code>. <code>Inv</code> gives <code>invoices[j] &lt;= 1</code> directly, and for a done job <code>output[j] = fence[j] = doneTok[j]</code>, which is <code>OutputOfCommitter</code>. The step case is the one TLC checked. The fenced <code>Write</code> sets output and fence to the same token. <code>Commit</code> needs <code>wtok[w] = fence[j]</code>, so <code>doneTok</code> becomes the fence. And nothing changes output or fence after the job is done. As {{ref:invariants}} says, this is a finite check, not a proof for all sizes; {{ref:proofs}} shows how to make it one.</p>
+<p><strong>5.</strong> Tokens increase per job and are never reused, even after the scheduler restarts. Storage checks the token and applies the write, or the commit, in one atomic step, like a conditional update in one transaction. The outbox relay and the email consumer give at-least-once delivery with deduplication, as in {{ref:ps-b3}}. Crashes and pauses happen finitely often; the bounds here stand in for that. A crashed holder's lease eventually expires. And the contract is about invoices queued, not delivered: delivery is the next layer's contract. Every one of these is either checked in some model of this course or stated as an assumption. That is what a reviewable design looks like.</p>
+</details>
+</article>

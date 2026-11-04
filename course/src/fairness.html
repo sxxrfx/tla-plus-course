@@ -1,0 +1,52 @@
+<h1>"May happen" is not "will happen."</h1>
+<p class="lead">ABSpec's <code>Spec</code> allows a value to be sent and then never received, because a behavior may stutter forever, as you saw in {{lesson:implementation}}. This lesson adds what a system <em>must</em> do. You write the requirement as a temporal formula, then add fairness conditions that make it true.</p>
+<!--fig:kinds-->
+<h2>Safety and liveness</h2>
+<p>A <strong>safety</strong> formula says what may happen. If a behavior violates it, the violation occurs at some particular point, and nothing later can undo it. <code>Init /\ [][Next]_vars</code> is one: it fails on a bad first state or on a step that is neither <code>Next</code> nor stuttering. A <strong>liveness</strong> formula says what must happen, and no point in a behavior can violate it, because the rest of the behavior could always make it true. Remember that a behavior here is any infinite sequence of states, not just one allowed by some spec.</p>
+<p>The figure's second row uses a new operator. <code>&lt;&gt;P</code>, read <em>eventually</em> P, says P is true on some state. It equals <code>~[]~P</code>; convince yourself of that. For a sequential program, the one liveness property is termination: <code>&lt;&gt;Terminated</code>. Concurrent systems have many others, written with these forms:</p>
+<div class="table-wrap"><table><thead><tr><th>Formula</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>&lt;&gt;P</code></td><td>P holds at some state.</td></tr>
+<tr><td><code>[]&lt;&gt;P</code></td><td>P holds infinitely often.</td></tr>
+<tr><td><code>&lt;&gt;[]P</code></td><td>There comes a point after which P always holds.</td></tr>
+<tr><td><code>P ~&gt; Q</code></td><td><em>P leads to Q</em>, which abbreviates <code>[](P =&gt; &lt;&gt;Q)</code>. Whenever P holds, Q holds then or later.</td></tr>
+</tbody></table></div>
+<p>For the channel, we'd like every value being sent to be received. The lecture gives this formula to copy; here it has a name, defined in a small wrapper module that extends ABSpec:</p>
+<pre><code>Delivered == \A v \in Data \X {0, 1} : (AVar = v) ~&gt; (BVar = v)</code></pre>
+<p>Eventually is not a deadline. It has no time bound at all. Also, with changing requests, the predicate must identify which request. Here the pair <code>v</code> plays that role, while an imprecise "some request completed" could be satisfied by an old one.</p>
+<h2>Enabled, and weak fairness</h2>
+<p>Action A is <strong>enabled</strong> in state s when some state t makes s → t an A step. A conjunct with no primes is an enabling condition, so ABSpec's A is enabled when <code>AVar = BVar</code> and <code>Data</code> is non-empty.</p>
+<p><strong>Weak fairness</strong> of A says: if A ever remains continuously enabled, an A step must eventually occur. Equivalently, A cannot stay enabled forever without another A step. It is written <code>WF_vars(A)</code>, in ASCII exactly like that, and read "WF of A". It is a liveness property, because an A step or a state where A is disabled can always make it true.</p>
+<p><strong>Strong fairness</strong>, <code>SF_vars(A)</code>, is stronger: if A is <em>repeatedly</em> enabled, even with gaps, an A step must eventually occur. The difference is the flicker shown in run 2 below.</p>
+<!--fig:wf-->
+<div class="lab" id="fair-lab"><h2>Inspect repeating schedules</h2><div class="controls"><label>Enabling pattern <select id="fair-pattern"><option value="always">Serve is always enabled</option><option value="flicker">Serve alternates enabled / disabled</option><option value="served">Serve eventually executes</option></select></label></div><div id="fair-timeline" class="lane"></div><div id="fair-result" class="readout" aria-live="polite"></div></div>
+<details class="answer"><summary>Predict: Serve is enabled every other step and never runs. Does weak fairness reject the behavior?</summary><p>No. It never stays enabled continuously forever. Strong fairness rejects that particular infinite behavior. Whether strong fairness is a justified system assumption is a separate question.</p></details>
+<h3>What the subscript means</h3>
+<p><code>WF_vars(A)</code> is weak fairness of the action <code>A /\ (vars' # vars)</code>, a non-stuttering A step. It makes no sense to require a stuttering step, since nobody could tell whether it happened.</p>
+<h2>Adding liveness to a spec</h2>
+<p>A spec with liveness has the form <code>Init /\ [][Next]_vars /\ Fairness</code>. Fairness is a conjunction of <code>WF</code> and <code>SF</code> formulas, each on a <em>subaction</em> of <code>Next</code>, meaning every step of it is a <code>Next</code> step. Now you can read the last line of ABSpec:</p>
+<pre><code>FairSpec == Spec /\ WF_vars(Next)</code></pre>
+<p>Behaviors must keep taking <code>Next</code> steps while <code>Next</code> is enabled. The safety part never reaches a state where it isn't, so A keeps sending and B keeps receiving forever. A second possible spec says something weaker, using <code>WF_vars(B)</code> alone: every sent value is received, but the sender may stop. Here are the checks, with <code>Data = {d1, d2, d3}</code>. All explore the same 24 states; only the question differs. <code>FairAB</code> abbreviates <code>Spec /\ WF_vars(A) /\ WF_vars(B)</code>.</p>
+<div class="table-wrap"><table><thead><tr><th>SPECIFICATION</th><th>PROPERTY</th><th>TLC says</th></tr></thead><tbody>
+<tr><td><code>Spec</code></td><td><code>Delivered</code></td><td>Violated. A step, then stuttering.</td></tr>
+<tr><td><code>FairSpec</code></td><td><code>Delivered</code></td><td>No error.</td></tr>
+<tr><td><code>Spec /\ WF_vars(B)</code></td><td><code>Delivered</code></td><td>No error.</td></tr>
+<tr><td><code>Spec /\ WF_vars(B)</code></td><td><code>FairAB</code></td><td>Violated. Stuttering from the first state: the sender stops.</td></tr>
+<tr><td><code>FairSpec</code></td><td><code>FairAB</code></td><td>No error.</td></tr>
+<tr><td><code>FairAB</code></td><td><code>FairSpec</code></td><td>No error.</td></tr>
+</tbody></table></div>
+<!--fig:stutter-->
+<p>The last two rows solve the lecture's exercise by checking both directions: weak fairness of <code>Next</code> and of A and B separately are equivalent here. A liveness check must not use a symmetry set, a TLC reduction some models use. These don't.</p>
+<div class="quiz" data-answer="0" data-explain="B becomes enabled when A sends and stays enabled until a B step, because only B changes BVar and A is disabled while the variables differ. Continuous enabling is just what weak fairness needs."><fieldset><legend>Why is weak fairness enough for action B of ABSpec?</legend><label><input type="radio" name="q-fairness" value="0">Once enabled, B stays enabled until a B step occurs</label><label><input type="radio" name="q-fairness" value="1">B is enabled in every state</label><label><input type="radio" name="q-fairness" value="2">Weak fairness forces A to keep sending</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>Worked architecture: a background upload worker</h2>
+<p>A mobile app has accepted upload U. The worker can <code>Send(U)</code> whenever the device is online and U is pending. Take a behavior where the phone keeps reconnecting and disconnecting before U is selected. As the figure shows, the upload was enabled many times, and weak fairness still doesn't require it to run.</p>
+<!--fig:upload-->
+<p>For <code>Pending(U) ~&gt; Uploaded(U)</code>, decide what the environment promises. If the device eventually stays online, <code>Send(U)</code> becomes continuously enabled and weak fairness suffices. Strong fairness would let recurring opportunities suffice, but background execution limits on the platform may make that assumption false. And sending still isn't delivery: a separate assumption is needed if the network can drop every attempt.</p>
+<p>Fairness also needs the right granularity. With uploads U and V pending, <code>WF_vars(SendAny)</code> can be satisfied by sending V forever while U waits. Attach fairness per request, such as <code>\A p \in Processes : WF_vars(Serve(p))</code>. Never add fairness merely to silence a counterexample. Fairness is not a scheduler, a response-time bound, or a delivery guarantee. It states what you assume, and permanent partitions can make the assumption false.</p>
+<details class="answer"><summary>Predict: a worker is weakly fair, but every request is dropped. Does "pending leads to delivered" follow?</summary><p>No. Worker scheduling and network delivery are different actions with different assumptions. A correct argument must connect retries, eventual delivery, acknowledgement, and durable completion instead of jumping from "worker runs" to "request succeeds".</p></details>
+<h2>While you watch</h2>
+<ul>
+<li>This lesson covers the second half of the lecture's first part. It only names strong fairness. The definition comes in part 2, right after the counterexample that needs it; this lesson shows it earlier so the lab can compare the two, and {{lesson:abp}} supplies the need.</li>
+<li>Pause at the eventually exercise. Then, at the two fair specs, explain to yourself why the sender may stop in one but not the other.</li>
+<li>The upload worker is not in the lecture.</li>
+</ul>
+<p class="resources"><a target="_blank" rel="noopener noreferrer" href="https://learntla.com/core/temporal-logic.html">Temporal properties</a> and <a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/video/videos.html">Lamport's lecture 9</a>.</p>

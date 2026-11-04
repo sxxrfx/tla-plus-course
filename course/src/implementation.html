@@ -1,0 +1,43 @@
+<h1>To implement a spec is to imply it.</h1>
+<p class="lead">The previous lesson made each spec a formula. Two-phase commit was supposed to implement transaction commit, and now that claim has a one-line statement: every behavior satisfying TPSpec also satisfies TCSpec. The surprise is what must be true of states and steps for that line to make sense.</p>
+<!--fig:two-->
+<h2>The theorem</h2>
+<p>Module TCommit has one variable, so its spec has a simpler subscript: <code>TCSpec == TCInit /\ [][TCNext]_rmState</code>. At the end of module TwoPhase, <code>INSTANCE</code> imports every definition from TCommit, and a theorem follows:</p>
+<pre><code>INSTANCE TCommit
+
+THEOREM TPSpec =&gt; TCSpec</code></pre>
+<p>Checking it follows the recipe you just learned: behavior spec on the left, property on the right.</p>
+<pre><code>SPECIFICATION TPSpec
+CONSTANT RM = {r1, r2, r3}
+PROPERTY TCSpec</code></pre>
+<p>TLC finds no error, with 288 distinct states: the same states as before, since only the question changed.</p>
+<h2>How can that formula even make sense?</h2>
+<p>TPSpec talks about four variables and TCSpec about one. The theorem looks like apples implying oranges. The answer is a fact held back until now: a state does not assign values only to the variables of your module. It assigns a value to <em>every possible variable</em>, infinitely many of them.</p>
+<!--fig:universe-->
+<p>So one state may have <code>Mozart = &lt;&lt;-37, {14}&gt;&gt;</code> and <code>tmState = "ouch"</code> alongside <code>rmState</code>. <code>TCInit</code> is true on it if <code>rmState</code> maps each element of RM to "working", whatever else is there. A behavior of TCSpec may even have <code>tmPrepared</code> changing wildly from state to state, since TCSpec is silent on it.</p>
+<p>This feels odd only if you read a spec as a program. It is a formula. <code>x + y = 7</code> does not claim there is no variable z. A useful picture: a spec describes a history of the universe in which the system and its environment behave correctly. It mentions the parts it depends on (<code>msgs</code> might stand for a real transport underneath the protocol), and says nothing about the rest.</p>
+<h2>Why stuttering has to be there</h2>
+<p>Both formulas now apply to the same behaviors. But how can the implication be true? <code>TMAbort</code> leaves <code>rmState</code> unchanged, while every <code>TCNext</code> step changes it. So a <code>TMAbort</code> step is not a <code>TCNext</code> step.</p>
+<p>The subscript from {{lesson:temporal}} is the answer. TCSpec requires only that every step satisfies <code>TCNext</code> or leaves <code>rmState</code> unchanged, and <code>TMAbort</code> does the second. In the first figure, each stutter cell is exactly that.</p>
+<details class="answer"><summary>Predict: narrow what counts as stuttering, so only a step that leaves all four TwoPhase variables unchanged is excused. Property: [][TCNext]_&lt;&lt;rmState, tmState, tmPrepared, msgs&gt;&gt;. What does TLC find?</summary><p>An error, immediately. TLC reports the action property violated after two states, with a <code>TMAbort</code> step, as the figure below shows. The property is the formula you would effectively have if specs could not stutter on variables they don't mention.</p></details>
+<!--fig:abort-->
+<p>Without stuttering, TPSpec would also forbid the Timbuktu Starbucks customer count from changing except when the protocol took a step. That is one reason all TLA+ specs allow it. The most important reason is the theorem itself: because of stuttering, <strong>implementation is simply implication</strong>. There is no separate notion of implementing to define.</p>
+<h2>A check that can fail</h2>
+<p>A theorem that TLC confirms tells you more if you've seen it fail. In a copy of TwoPhase, delete one line from <code>TMCommit</code>, the conjunct <code>tmPrepared = RM</code>, so the manager can commit without hearing from anyone. Then check <code>PROPERTY TCSpec</code> again with two resource managers.</p>
+<!--fig:bug-->
+<p>TLC reports the action property on the <code>[][TCNext]_rmState</code> part of TCSpec as violated, with the three-state trace above. The buggy step changes only <code>tmState</code> and <code>msgs</code>, so TCSpec lets it pass as stuttering. Only when r1 acts on the message does <code>rmState</code> do something no <code>TCNext</code> step allows, because <code>Decide</code> commits only from "prepared". A violation in the high-level view may show up later than its cause.</p>
+<div class="quiz" data-answer="2" data-explain="TCSpec constrains only rmState. A behavior of TCSpec can have tmState equal to anything, so it need not satisfy TPInit. Implication goes one way: the detailed spec implies the abstract one."><fieldset><legend>Should <code>TCSpec =&gt; TPSpec</code> also hold?</legend><label><input type="radio" name="q-implementation" value="0">Yes, implementation goes both ways</label><label><input type="radio" name="q-implementation" value="1">Yes, because both are about rmState</label><label><input type="radio" name="q-implementation" value="2">No, TCSpec says nothing about tmState, so its behaviors need not satisfy TPSpec</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>Termination, and stopping too soon</h2>
+<p>Return to SimpleProgram: <code>Init /\ [][Next]_&lt;&lt;pc, i&gt;&gt;</code>. Its formula allows stuttering between real steps, and after the last one, forever. That is how TLA+ represents a terminating execution: a behavior ending in infinitely many stuttering steps. The universe keeps going after your system finishes. As a result, <em>all behaviors are infinite</em>, and finite ones never need separate treatment.</p>
+<!--fig:stop-->
+<p>Look at the bottom row. It also satisfies the formula: it takes one step, then stutters forever. Everything you've written so far allows the system to stop at any time. These specs say what a system <em>may</em> do, not what it <em>must</em> do. That is not a defect to patch inside the next-state formula. They are very different requirements and should be stated separately, by conjoining a further temporal formula L:</p>
+<pre><code>Init /\ [][Next]_vars /\ L</code></pre>
+<p>Writing L is the main business of the next lecture, starting at {{lesson:fairness}}. It is the tiny part of a spec. The may part is much larger, usually more important, and already enough for useful specs.</p>
+<details class="answer"><summary>Predict: TLC checks TPSpec =&gt; TCSpec and finds no error. Does that show two-phase commit ever commits anything?</summary><p>No. A behavior that stutters forever from the initial state satisfies both formulas. The theorem says each step TwoPhase takes is one TCommit permits. Nothing here says a step must be taken.</p></details>
+<h2>While you watch</h2>
+<ul>
+<li>Lamport warns that this will feel strange, and compares it to learning the earth is round. Notice exactly which two facts do the work: states assign all variables, and all specs allow stuttering.</li>
+<li>Pause where he asks you to add TCSpec as a property in your TwoPhase model, and run it. The bug above is something to try afterwards; it is not in the lecture.</li>
+<li>Watch how a single behavior gets redrawn several times. First it has hidden variables, then stuttering steps, and then an infinite tail.</li>
+</ul>
+<p class="resources"><a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/video/videos.html">Lamport's TLA+ Video Course, lecture 8</a>.</p>

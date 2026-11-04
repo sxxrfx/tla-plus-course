@@ -1,0 +1,324 @@
+<h1>Problem set 4: write the steps, then let TLC search.</h1>
+<p class="lead">These problems practice what Lecture 4 taught: actions with guards and complete frames, and the trick of claiming that a goal is never reached so that TLC hands you the steps. They also lean on running TLC and reading its results, from {{lesson:counter}}, and the last one reuses Euclid's algorithm from {{ref:ps-l3}}.</p>
+<p>Write every frame line out in full: <code>UNCHANGED</code> arrives with Lecture 6. When a problem asks for the length of a trace, run TLC with one worker (<code>-workers 1</code>), as {{lesson:diehard-tlc}} recommends, so that its breadth-first search returns a shortest one.</p>
+
+<article class="problem" id="ps-l4-modal">
+<p class="problem-meta"><span>Problem 1</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">Design systems</span></p>
+<h2>The modal that leaves the page frozen</h2>
+<p class="uses">Draws on {{ref:actions}}, {{ref:diehard-tlc}} and {{ref:counter}}.</p>
+<p>Your design system ships a Modal dialog component. While it is open, it keeps keyboard focus inside the dialog and locks page scrolling, so the page behind it doesn't move. It closes in two ways: the close button, or the Escape key. A bug report arrives: after someone closes a dialog with Escape, the page no longer scrolls. You write the component as a state machine with three variables. <code>CloseButton</code> was written carefully. <code>PressEscape</code> was added later by copying its first three lines.</p>
+<pre><code>------------------------------ MODULE PSl4_Modal ------------------------------
+VARIABLES open, focus, scrollLocked
+
+TypeOK == /\ open \in {TRUE, FALSE}
+          /\ focus \in {"page", "dialog"}
+          /\ scrollLocked \in {TRUE, FALSE}
+
+Init == /\ open = FALSE
+        /\ focus = "page"
+        /\ scrollLocked = FALSE
+
+OpenDialog == /\ ~open
+              /\ open' = TRUE
+              /\ focus' = "dialog"
+              /\ scrollLocked' = TRUE
+
+CloseButton == /\ open
+               /\ open' = FALSE
+               /\ focus' = "page"
+               /\ scrollLocked' = FALSE
+
+PressEscape == /\ open
+               /\ open' = FALSE
+               /\ focus' = "page"
+
+Next == OpenDialog \/ CloseButton \/ PressEscape
+
+LockMatches == scrollLocked = open
+FocusInside == open =&gt; focus = "dialog"
+=============================================================================</code></pre>
+<p>The config lists <code>INIT Init</code>, <code>NEXT Next</code>, and the invariants <code>TypeOK</code>, <code>LockMatches</code> and <code>FocusInside</code>.</p>
+<!--fig:modal-->
+<ol class="tasks" type="a">
+<li>Before running anything: as a formula, what does <code>PressEscape</code> say about <code>scrollLocked'</code>? Which next states does it allow? The dashed arrow down in the diagram is your clue.</li>
+<li>Run TLC. What does it report, and after which action?</li>
+<li>A teammate makes the error go away by adding <code>/\ scrollLocked' = scrollLocked</code> to <code>PressEscape</code>. Run TLC again. What does it report now, and how long is the trace?</li>
+<li>Write the correct <code>PressEscape</code>. Then draw the frame matrix from {{lesson:actions}} for the three actions: one row per action, one column per variable, and the value each action gives each variable. How many distinct states does TLC find with your fix?</li>
+</ol>
+<div class="quiz" data-answer="1" data-explain="TLC needs a value for every variable in the next state. PressEscape gives none for scrollLocked, so TLC stops with the error from the actions lesson. It doesn't keep the old value, and it never gets as far as checking LockMatches in that state."><fieldset><legend>What does TLC report for the module as written?</legend><label><input type="radio" name="q-ps-l4-modal" value="0">Invariant <code>LockMatches</code> is violated</label><label><input type="radio" name="q-ps-l4-modal" value="1">The successor state isn't completely specified by <code>PressEscape</code>: <code>scrollLocked</code> isn't defined</label><label><input type="radio" name="q-ps-l4-modal" value="2">No error: <code>scrollLocked</code> keeps its value</label><label><input type="radio" name="q-ps-l4-modal" value="3">A parse error</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="3|three" data-explain="Init, OpenDialog, PressEscape. In the third state the dialog is closed and scrollLocked is still TRUE, so LockMatches fails." data-retry="Count the initial state as state 1."><label>With the copied frame line, how many states are in the trace TLC prints? <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>A frame line is a decision about what a step does, not boilerplate. Ask what pressing Escape should do to the scroll lock, then compare with what <code>CloseButton</code> does.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong> <code>PressEscape</code> doesn't mention <code>scrollLocked'</code>, so as a formula it allows any value at all: <code>TRUE</code>, <code>FALSE</code>, 42, or <code>"abc"</code>. It doesn't keep the old value.</p>
+<p><strong>(b)</strong> TLC stops with the error you met in {{lesson:actions}}:</p>
+<pre><code>Error: Successor state is not completely specified by action PressEscape
+of the next-state relation. The following variable is not defined: scrollLocked.
+State 1: &lt;Initial predicate&gt;      open = FALSE, focus = "page",   scrollLocked = FALSE
+State 2: &lt;OpenDialog ...&gt;         open = TRUE,  focus = "dialog", scrollLocked = TRUE
+State 3: &lt;PressEscape ...&gt;        open = FALSE, focus = "page",   scrollLocked = null</code></pre>
+<p>(We put each state on one line.) The <code>null</code> is how TLC prints the value it couldn't determine.</p>
+<p><strong>(c)</strong> With the copied frame line, the spec is complete and wrong. TLC reports <code>Invariant LockMatches is violated</code> with a 3-state trace: the initial state, <code>OpenDialog</code>, then <code>PressEscape</code>, which ends with the dialog closed and <code>scrollLocked = TRUE</code>. That is the red box in the diagram, and it is exactly the bug report. The error in (b) was TLC pointing at the problem. Silencing it with the first frame line that parses turned it into the bug.</p>
+<p><strong>(d)</strong> Escape should do what the close button does:</p>
+<pre><code>PressEscape == /\ open
+               /\ open' = FALSE
+               /\ focus' = "page"
+               /\ scrollLocked' = FALSE</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Action</th><th><code>open'</code></th><th><code>focus'</code></th><th><code>scrollLocked'</code></th></tr></thead><tbody><tr><td><code>OpenDialog</code></td><td>TRUE</td><td>"dialog"</td><td>TRUE</td></tr><tr><td><code>CloseButton</code></td><td>FALSE</td><td>"page"</td><td>FALSE</td></tr><tr><td><code>PressEscape</code></td><td>FALSE</td><td>"page"</td><td>FALSE</td></tr></tbody></table></div>
+<p>With this fix (module <code>PSl4_ModalFixed</code>), TLC finds no error and 2 distinct states: closed and open. Two of the three cells in the bug's row of the matrix were right. The blank one was where the bug lived. In component code the same gap appears when one close path calls the cleanup and another doesn't. Many teams avoid it by routing every way of closing through one function. In the spec, the matrix makes the gap visible.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l4-migration">
+<p class="problem-meta"><span>Problem 2</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Databases</span></p>
+<h2>Rename a column without downtime</h2>
+<p class="uses">Draws on {{ref:actions}}, {{ref:diehard-tlc}} and {{ref:counter}}.</p>
+<p>Your team must rename <code>users.email</code> to <code>users.email_address</code> in a production Postgres database. A plain rename would break every running server that still queries <code>email</code>. So you use the expand and contract pattern: add the new column, deploy app v2 that writes both columns, backfill old rows, deploy v3 that reads the new column, deploy v4 that writes only the new column, and drop the old column. Each step has a precondition in the runbook. In the model below, each precondition is a guard.</p>
+<p><code>missing</code> means some row has no value in <code>email_address</code>. It starts <code>TRUE</code>: no existing row has one. <code>SignUp</code> is a user registering while v1 is live, which writes only <code>email</code>.</p>
+<details class="answer"><summary>The module (open to copy)</summary>
+<pre><code>--------------------------- MODULE PSl4_Migration ---------------------------
+EXTENDS Integers
+
+VARIABLES schema,      \* columns that exist: "old", "both", or "new"
+          app,         \* deployed app version, 1..4
+          backfilled,  \* the backfill job has finished
+          missing      \* some row has no value in email_address
+
+TypeOK == /\ schema \in {"old", "both", "new"}
+          /\ app \in 1..4
+          /\ backfilled \in {TRUE, FALSE}
+          /\ missing \in {TRUE, FALSE}
+
+Init == /\ schema = "old"
+        /\ app = 1
+        /\ backfilled = FALSE
+        /\ missing = TRUE
+
+OldExists == schema \in {"old", "both"}
+NewExists == schema \in {"both", "new"}
+
+\* v1 reads and writes email; v2 writes both; v3 reads email_address;
+\* v4 writes only email_address.
+WritesOld == app \in {1, 2, 3}
+WritesNew == app \in {2, 3, 4}
+ReadsNew  == app \in {3, 4}
+
+AddColumn == /\ schema = "old"
+             /\ schema' = "both"
+             /\ app' = app
+             /\ backfilled' = backfilled
+             /\ missing' = missing
+
+DeployV2 == /\ app = 1
+            /\ NewExists
+            /\ app' = 2
+            /\ schema' = schema
+            /\ backfilled' = backfilled
+            /\ missing' = missing
+
+Backfill == /\ ~backfilled
+            /\ app = 2
+            /\ backfilled' = TRUE
+            /\ missing' = FALSE
+            /\ schema' = schema
+            /\ app' = app
+
+DeployV3 == /\ app = 2
+            /\ backfilled
+            /\ app' = 3
+            /\ schema' = schema
+            /\ backfilled' = backfilled
+            /\ missing' = missing
+
+DeployV4 == /\ app = 3
+            /\ app' = 4
+            /\ schema' = schema
+            /\ backfilled' = backfilled
+            /\ missing' = missing
+
+DropOld == /\ schema = "both"
+           /\ app = 4
+           /\ schema' = "new"
+           /\ app' = app
+           /\ backfilled' = backfilled
+           /\ missing' = missing
+
+\* A user signs up while v1 is live: the new row gets only email.
+SignUp == /\ app = 1
+          /\ missing' = TRUE
+          /\ schema' = schema
+          /\ app' = app
+          /\ backfilled' = backfilled
+
+Next == \/ AddColumn \/ DeployV2 \/ Backfill \/ DeployV3
+        \/ DeployV4 \/ DropOld \/ SignUp
+
+WritesOK == /\ (WritesOld =&gt; OldExists)
+            /\ (WritesNew =&gt; NewExists)
+ReadsOK == IF ReadsNew THEN NewExists /\ ~missing ELSE OldExists
+NotDone == ~(schema = "new" /\ app = 4)
+=============================================================================</code></pre>
+<p>The config:</p>
+<pre><code>INIT Init
+NEXT Next
+INVARIANT TypeOK
+INVARIANT WritesOK
+INVARIANT ReadsOK
+CHECK_DEADLOCK FALSE</code></pre></details>
+<ol class="tasks" type="a">
+<li>For each of the guards <code>NewExists</code> in <code>DeployV2</code>, <code>app = 2</code> in <code>Backfill</code>, <code>backfilled</code> in <code>DeployV3</code>, and <code>app = 4</code> in <code>DropOld</code>, say which invariant would fail without it, and in which situation.</li>
+<li>Run TLC with the config. How many distinct states does it find? Why must the deadlock check be off here, and is the stop it would report a deadlock or termination?</li>
+<li>Add <code>INVARIANT NotDone</code>. What does TLC's trace give you?</li>
+<li>The backfill takes hours on a big table, so a teammate wants to start it as soon as the column exists. Change the guard <code>app = 2</code> in <code>Backfill</code> to <code>NewExists</code> and run again. Which invariant fails, and why?</li>
+</ol>
+<div class="numcheck" data-answer="7|seven" data-explain="Every guard allows exactly one next step in the runbook, and SignUp never changes anything (missing is already TRUE while v1 is live). So the reachable states form one line of 7." data-retry="Run the module with the config exactly as given."><label>Distinct states TLC finds with the config as given <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="6|six" data-explain="Init, AddColumn, Backfill, SignUp, DeployV2, DeployV3. The sign-up after the backfill creates a row with no email_address, and v3 reads that column." data-retry="Use -workers 1 so the trace is a shortest one, and count the initial state."><label>After the change in (d), how many states are in TLC's trace? <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>For (a), delete one guard at a time and run TLC. That's faster than arguing, and the trace tells you the situation. For (d), look at which action can set <code>missing</code> back to <code>TRUE</code>, and when it is enabled.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong> Without <code>NewExists</code>, v2 could go live before the column exists, so it would write to a column that isn't there: <code>WritesOK</code>. Without <code>app = 2</code>, the backfill could run while v1 still writes only <code>email</code>: that is part (d), and <code>ReadsOK</code> fails later. Without <code>backfilled</code>, v3 would read <code>email_address</code> while old rows have no value there: <code>ReadsOK</code>. Without <code>app = 4</code>, you could drop <code>email</code> while v1, v2 or v3 still writes it: <code>WritesOK</code>.</p>
+<p><strong>(b)</strong> No error, 7 distinct states. The guards leave exactly one runbook step enabled at a time, so the state graph is a single line. <code>SignUp</code> adds nothing, because while v1 is live <code>missing</code> is already <code>TRUE</code>. After <code>DropOld</code>, no action is enabled. The migration is supposed to end there, so this is termination, as in {{lesson:counter}}. With the check on, TLC reports <code>Deadlock reached</code> at that final state.</p>
+<p><strong>(c)</strong> TLC reports <code>Invariant NotDone is violated</code> with a 7-state trace: <code>AddColumn</code>, <code>DeployV2</code>, <code>Backfill</code>, <code>DeployV3</code>, <code>DeployV4</code>, <code>DropOld</code>. That is the runbook, in an order every guard allows. It also shows the guards don't block each other: a runbook whose preconditions can never all be met would have no such trace.</p>
+<p><strong>(d)</strong> TLC reports <code>Invariant ReadsOK is violated</code>:</p>
+<!--fig:migration-->
+<p>The backfill copies every row that exists at the time, and the guard <code>NewExists</code> allows it while v1 is live. A user signs up, and v1 writes the new row's <code>email</code> only. The backfill already ran, so nothing ever copies that row. v2 and v3 deploy, and v3 reads <code>email_address</code>, which is empty for that user. In production the user would look like they had no email address. The step the trace exposes is <code>SignUp</code>, and you probably never thought of it as part of the migration. The guard <code>app = 2</code> says the backfill starts only once every new row gets both columns, which closes that gap.</p>
+<p>Two limits of this model are worth knowing. It deploys each version to every server in one step, while a real rolling deploy runs two versions side by side for a while. And it has one kind of write; updates and deletes of existing rows need the same reasoning. Both would be good extensions once you have more notation.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l4-hanoi">
+<p class="problem-meta"><span>Problem 3</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Algorithms</span></p>
+<h2>Tower of Hanoi: let breadth-first search find the shortest solution</h2>
+<p class="uses">Draws on {{ref:diehard}}, {{ref:actions}} and {{ref:diehard-tlc}}.</p>
+<p>The Tower of Hanoi is the textbook example of recursion. Disks of different sizes sit on peg 1, largest at the bottom. You must move them all to peg 3, one disk at a time, never putting a disk on a smaller one. The recursive algorithm moves n − 1 disks out of the way, moves the largest, then moves the n − 1 back on top, for 2<sup>n</sup> − 1 moves. A colleague reviewing your course notes asks whether any solution is shorter. Rather than prove it, let TLC look at every possibility for 3 disks.</p>
+<p>Use one variable per disk: <code>d1</code> (smallest), <code>d2</code>, <code>d3</code> (largest), each holding the number of the peg the disk is on. You don't need to record the order of disks on a peg, because the rules force it: it is always by size.</p>
+<ol class="tasks" type="a">
+<li>Write the module: <code>TypeOK</code>, <code>Init</code>, and one action per disk, <code>MoveD1</code>, <code>MoveD2</code>, <code>MoveD3</code>. A disk can move only if no smaller disk is on its peg, and only to a peg with no smaller disk. Remember the frame lines.</li>
+<li>Write <code>NotSolved</code>, the claim that the disks never all reach peg 3, and run TLC with one worker. How many states are in the trace? Compare it with the recursive algorithm's moves.</li>
+<li>Remove <code>NotSolved</code> and run again. How many distinct states are there, and why exactly that many?</li>
+<li>Add a fourth disk. Predict both numbers before you run TLC, then check.</li>
+</ol>
+<div class="numcheck" data-answer="8|eight" data-explain="7 moves plus the initial state. TLC's search is breadth-first, so no solution has fewer than 7 moves, matching 2^3 − 1." data-retry="Count states, not moves: the initial state is state 1."><label>States in TLC's trace for 3 disks <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="27|twenty-seven|twentyseven" data-explain="Each disk can be on any of 3 pegs, so there are 3 × 3 × 3 = 27 assignments. Each assignment describes exactly one legal position (disks on a peg are stacked by size), and TLC reaches all 27." data-retry="Think about how many ways there are to give each disk a peg."><label>Distinct states for 3 disks <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>If <code>a</code> and <code>b</code> are two different pegs among 1, 2 and 3, the third one is <code>6 - a - b</code>. When can <code>d2</code> move, and where can it go? The smallest disk is always on top and has two choices: use <code>d1' \in</code> with an <code>IF</code> that gives the set of the other two pegs.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong></p>
+<pre><code>------------------------------ MODULE PSl4_Hanoi ------------------------------
+EXTENDS Integers
+
+\* d1 is the smallest disk, d3 the largest. Each holds the peg (1, 2 or 3)
+\* the disk is on. On any peg, the disks sit in size order.
+VARIABLES d1, d2, d3
+
+TypeOK == /\ d1 \in 1..3
+          /\ d2 \in 1..3
+          /\ d3 \in 1..3
+
+Init == /\ d1 = 1
+        /\ d2 = 1
+        /\ d3 = 1
+
+\* The smallest disk is always on top, and can go to either other peg.
+MoveD1 == /\ d1' \in IF d1 = 1 THEN {2, 3}
+                     ELSE IF d1 = 2 THEN {1, 3}
+                     ELSE {1, 2}
+          /\ d2' = d2
+          /\ d3' = d3
+
+\* d2 is on top if d1 isn't on its peg. It can't go onto d1, so it goes to
+\* the one remaining peg. Pegs are 1, 2, 3, so the third one is 6 - d1 - d2.
+MoveD2 == /\ d1 /= d2
+          /\ d2' = 6 - d1 - d2
+          /\ d1' = d1
+          /\ d3' = d3
+
+\* d3 can move only when d1 and d2 are both on the same other peg.
+MoveD3 == /\ d1 = d2
+          /\ d1 /= d3
+          /\ d3' = 6 - d1 - d3
+          /\ d1' = d1
+          /\ d2' = d2
+
+Next == MoveD1 \/ MoveD2 \/ MoveD3
+
+NotSolved == ~(d1 = 3 /\ d2 = 3 /\ d3 = 3)
+=============================================================================</code></pre>
+<p>The guards come from the rules. <code>d2</code> is on top of its peg exactly when <code>d1</code> isn't there. It can't go onto <code>d1</code>, so its only legal target is the third peg, <code>6 - d1 - d2</code>. <code>d3</code> can move only when both smaller disks are off its peg and off the target, which means they are together on the remaining peg: <code>d1 = d2</code> and <code>d1 /= d3</code>.</p>
+<!--fig:hanoi-->
+<p><strong>(b)</strong> With <code>INVARIANT NotSolved</code> and one worker, TLC reports the violation with an 8-state trace: 7 moves. The diagram shows it, one column per state. It is the recursive algorithm's sequence exactly. The smallest disk moves on every other step, and the largest moves once, in the middle. Breadth-first search examined all states 1 move away, then 2, and so on, so no solution with 6 or fewer moves exists. For 3 disks, that answers your colleague.</p>
+<p><strong>(c)</strong> Without <code>NotSolved</code>, there is no error and 27 distinct states. Every way of giving three disks a peg each is a legal position, and every legal position is reachable. The state graph is connected.</p>
+<p><strong>(d)</strong> <code>MoveD4</code> needs <code>d1 = d2</code>, <code>d2 = d3</code> and <code>d1 /= d4</code>, and every other action gains the frame line <code>d4' = d4</code> (module <code>PSl4_Hanoi4</code>). TLC finds a 16-state trace (15 moves, which is 2<sup>4</sup> − 1) and 81 = 3<sup>4</sup> distinct states. A check on 3 and 4 disks is not a proof for every n, of course. It is strong evidence for a claim that has a short proof by induction.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l4-dosing">
+<p class="problem-meta"><span>Problem 4 · Synthesis</span><span class="level" title="Difficulty 3 of 3">●●●</span><span class="domain">Algorithms</span></p>
+<h2>A dosing station that can't measure 3 litres</h2>
+<p class="uses">Draws on {{ref:diehard-tlc}}, {{ref:counter}}, {{ref:logic}}, and the Euclid's GCD problem in {{ref:ps-l3}}.</p>
+<p>A lab automation rig measures liquid with two fixed chambers and no level sensors: a 4-litre chamber and a 6-litre chamber. It can fill a chamber from the supply, drain a chamber, or pump from one chamber into the other until the source is empty or the destination is full. These are the Die Hard jugs in steel. A new recipe needs exactly 3 litres, and the controls engineer asks you whether any sequence of operations produces it.</p>
+<p>Recall Euclid's algorithm from {{ref:ps-l3}}: replacing the larger of two numbers by their difference doesn't change their greatest common divisor, so it ends at gcd of the starting pair. Here gcd(4, 6) = 2.</p>
+<ol class="tasks" type="a">
+<li>Generalize the <code>DieHard</code> module. Define the capacities as <code>Small == 4</code> and <code>Big == 6</code>, the way <code>Counter</code> defined <code>Max == 3</code>, and use those names everywhere, including in the pours.</li>
+<li>Claim <code>NoThree</code>: neither chamber ever holds 3. Run TLC. How many distinct states does it find, and what does the result mean? Before you trust it, show that your setup can find a violation by claiming <code>NoTwo == big /= 2</code>.</li>
+<li>Explain the result with the gcd. Write it as an invariant <code>Even</code> and check it.</li>
+<li>The vendor offers a 5-litre chamber instead of the 4-litre one. Predict what changes, then change one definition and check. How many states are in the shortest trace to 3 litres?</li>
+</ol>
+<div class="numcheck" data-answer="10|ten" data-explain="The reachable states are those with a chamber empty or full and both amounts even: small 0 or 4 with big 0, 2, 4 or 6 (8 states), plus small 2 with big 0 or 6 (2 states)." data-retry="Run your module with INVARIANT TypeOK and INVARIANT NoThree."><label>Distinct states for chambers of 4 L and 6 L <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="9|nine" data-explain="FillSmall, SmallToBig, FillSmall, SmallToBig (big is full and 4 stays behind), EmptyBig, SmallToBig, FillSmall, SmallToBig: 8 steps, 9 states, ending with 3 litres in the 5-litre chamber." data-retry="Use one worker, and count the initial state."><label>With 5 L and 6 L chambers, states in TLC's shortest trace to 3 litres <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="2" data-explain="TLC checked NoThree in every reachable state of this finite model, and the NoTwo run showed the setup can find a violation. Together they justify the conclusion for these two capacities."><fieldset><legend>TLC reports no violation of <code>NoThree</code>. What makes that a trustworthy answer?</legend><label><input type="radio" name="q-ps-l4-dosing" value="0">TLC ran for long enough</label><label><input type="radio" name="q-ps-l4-dosing" value="1">The invariant is a true statement about integers</label><label><input type="radio" name="q-ps-l4-dosing" value="2">TLC examined every reachable state, and a deliberately false claim did fail</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Look at what each of the six actions does to the amounts: each one sets a chamber to 0 or to its capacity, or moves water from one chamber to the other. If both amounts are even before a step, can either be odd after it?</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong></p>
+<pre><code>------------------------------- MODULE PSl4_Dosing -------------------------------
+EXTENDS Integers
+
+Small == 4    \* litres the small chamber holds
+Big   == 6    \* litres the big chamber holds
+
+VARIABLES small, big
+
+TypeOK == /\ small \in 0..Small
+          /\ big   \in 0..Big
+
+Init == /\ small = 0
+        /\ big   = 0
+
+FillSmall == /\ small' = Small
+             /\ big'   = big
+
+FillBig == /\ big'   = Big
+           /\ small' = small
+
+EmptySmall == /\ small' = 0
+              /\ big'   = big
+
+EmptyBig == /\ big'   = 0
+            /\ small' = small
+
+SmallToBig == IF big + small =&lt; Big
+                THEN /\ big'   = big + small
+                     /\ small' = 0
+                ELSE /\ big'   = Big
+                     /\ small' = small - (Big - big)
+
+BigToSmall == IF big + small =&lt; Small
+                THEN /\ big'   = 0
+                     /\ small' = big + small
+                ELSE /\ big'   = big - (Small - small)
+                     /\ small' = Small
+
+Next == \/ FillSmall  \/ FillBig
+        \/ EmptySmall \/ EmptyBig
+        \/ SmallToBig \/ BigToSmall
+
+NoThree == /\ small /= 3
+           /\ big   /= 3
+NoTwo   == big /= 2
+Even    == /\ small \in {0, 2, 4}
+           /\ big   \in {0, 2, 4, 6}
+=============================================================================</code></pre>
+<!--fig:dosing-->
+<p><strong>(b)</strong> With <code>INVARIANT TypeOK</code> and <code>INVARIANT NoThree</code>, TLC reports no error and 10 distinct states, the filled cells of the grid. Because the model is finite and TLC examined every reachable state, “no error” here means that no sequence of operations ever puts 3 litres in either chamber. That is a real answer only if the check could have failed. Claiming <code>NoTwo</code> shows it could: TLC reports a violation with a 3-state trace, <code>FillBig</code> then <code>BigToSmall</code>, which leaves 2 litres in the big chamber. This is the experiment-that-fails test from {{lesson:diehard-tlc}}, used in reverse to trust a success.</p>
+<p><strong>(c)</strong> Each action sets a chamber to 0, to 4, or to 6, all even, or moves water between chambers so that the total stays the same and one chamber ends empty or full. Start with two even amounts, and every one of these steps leaves two even amounts. So <code>Even</code> is an invariant, and TLC confirms it: no error, 10 states. It is the same argument as Euclid's: a step that only adds or subtracts multiples of 2 can't produce an odd number. In general, every amount you can measure is a multiple of gcd(Small, Big). Euclid's algorithm computes exactly that number by repeated subtraction, much as the pumps subtract one chamber from the other.</p>
+<p><strong>(d)</strong> gcd(5, 6) = 1, so the argument no longer rules 3 out. Set <code>Small == 5</code> (module <code>PSl4_Dosing56</code>) and TLC reports <code>NoThree</code> violated with a 9-state trace: fill 5, pump into 6, fill 5, pump until 6 is full (4 left), drain 6, pump the 4 across, fill 5, pump until 6 is full, which leaves 3 in the 5-litre chamber. Without <code>NoThree</code>, TLC finds 22 distinct states. So the engineer's answer is: not with these chambers; with a 5-litre chamber, yes, in 8 operations.</p>
+<p>Notice what each chapter contributed. The state machine view turned a machine into variables and steps. TLC's exhaustive search made “impossible” a checkable claim. The invariant from {{ref:ps-l3}} explains why it's impossible, and tells you which chamber sizes would work before you run anything.</p>
+</details>
+</article>

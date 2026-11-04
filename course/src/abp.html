@@ -1,0 +1,116 @@
+<h1>Keep resending until the right bit comes back.</h1>
+<p class="lead">{{lesson:abspec}} said what should happen and {{lesson:fairness}} said it must. Now comes how. Sender A and receiver B talk over two channels that can lose messages, and all they have to work with is the one bit from ABSpec. You'll check that the protocol implements its spec, then see weak fairness fail on a real counterexample and strong fairness repair it.</p>
+<!--fig:protocol-->
+<h2>How it works</h2>
+<p>A repeatedly sends its current <code>AVar</code> on channel <code>AtoB</code>, since any copy might be lost. B repeatedly sends the bit of <code>BVar</code> on channel <code>BtoA</code>, as an acknowledgement. Then the bits do all the work:</p>
+<ul>
+<li>When B receives a message whose bit differs from its own, it's a new value, so B sets <code>BVar</code> to it. A message with the same bit is one B already has.</li>
+<li>When A receives a bit equal to its own, its current value has been acknowledged, so it chooses a new value and flips its bit. A different bit is a stale ack for the previous value.</li>
+</ul>
+<div class="lab" id="abp-lab"><h2>Step the protocol yourself</h2>
+<p>You are the scheduler and the network. This is an educational model, not TLC. Click a message to lose it. A channel holds at most 3 messages here, as in the lecture's model.</p>
+<div class="controls"><button type="button" id="abp-asnd">ASnd</button><button type="button" id="abp-arcv">ARcv</button><button type="button" id="abp-bsnd">BSnd</button><button type="button" id="abp-brcv">BRcv</button><button type="button" id="abp-reset">Reset</button><label><input type="checkbox" id="abp-bug"> Break A: treat any ack as a match</label></div>
+<div class="lane"><span>AtoB</span><div class="track" id="abp-atob"></div></div>
+<div class="lane"><span>BtoA</span><div class="track" id="abp-btoa"></div></div>
+<div id="abp-state" class="readout"></div>
+<div id="abp-view" class="readout" aria-live="polite"></div></div>
+<p>Try this in the lab. Send, lose the message, and send again, watching the high-level view stay at stuttering until one copy gets through. Then tick the box, send acks, and receive them with nothing delivered.</p>
+<h2>The specification</h2>
+<p>Module AB has nothing new except sequence operators. A send appends to a channel, a receive takes the head, and <code>LoseMsg</code> uses <code>Remove</code> to delete any message.</p>
+<pre><code>--------------------------------- MODULE AB ---------------------------------
+EXTENDS Integers, Sequences
+
+CONSTANT Data
+
+Remove(i, seq) ==
+  [j \in 1..(Len(seq) - 1) |-&gt; IF j &lt; i THEN seq[j] ELSE seq[j + 1]]
+
+VARIABLES AVar, BVar, AtoB, BtoA
+
+vars == &lt;&lt;AVar, BVar, AtoB, BtoA&gt;&gt;
+
+TypeOK == /\ AVar \in Data \X {0, 1}
+          /\ BVar \in Data \X {0, 1}
+          /\ AtoB \in Seq(Data \X {0, 1})
+          /\ BtoA \in Seq({0, 1})
+
+Init == /\ AVar \in Data \X {1}
+        /\ BVar = AVar
+        /\ AtoB = &lt;&lt;&gt;&gt;
+        /\ BtoA = &lt;&lt;&gt;&gt;
+
+ASnd == /\ AtoB' = Append(AtoB, AVar)
+        /\ UNCHANGED &lt;&lt;AVar, BtoA, BVar&gt;&gt;
+
+ARcv == /\ BtoA # &lt;&lt;&gt;&gt;
+        /\ IF Head(BtoA) = AVar[2]
+             THEN \E d \in Data : AVar' = &lt;&lt;d, 1 - AVar[2]&gt;&gt;
+             ELSE AVar' = AVar
+        /\ BtoA' = Tail(BtoA)
+        /\ UNCHANGED &lt;&lt;AtoB, BVar&gt;&gt;
+
+BSnd == /\ BtoA' = Append(BtoA, BVar[2])
+        /\ UNCHANGED &lt;&lt;AVar, BVar, AtoB&gt;&gt;
+
+BRcv == /\ AtoB # &lt;&lt;&gt;&gt;
+        /\ IF Head(AtoB)[2] # BVar[2]
+             THEN BVar' = Head(AtoB)
+             ELSE BVar' = BVar
+        /\ AtoB' = Tail(AtoB)
+        /\ UNCHANGED &lt;&lt;AVar, BtoA&gt;&gt;
+
+LoseMsg == /\ \/ /\ \E i \in 1..Len(AtoB) : AtoB' = Remove(i, AtoB)
+                 /\ BtoA' = BtoA
+              \/ /\ \E i \in 1..Len(BtoA) : BtoA' = Remove(i, BtoA)
+                 /\ AtoB' = AtoB
+           /\ UNCHANGED &lt;&lt;AVar, BVar&gt;&gt;
+
+Next == ASnd \/ ARcv \/ BSnd \/ BRcv \/ LoseMsg
+
+Spec == Init /\ [][Next]_vars
+
+ABS == INSTANCE ABSpec
+
+THEOREM Spec =&gt; ABS!Spec
+
+FairSpec == Spec /\ SF_vars(ARcv) /\ SF_vars(BRcv)
+                 /\ WF_vars(ASnd) /\ WF_vars(BSnd)
+
+THEOREM FairSpec =&gt; ABS!FairSpec
+=============================================================================</code></pre>
+<p>The new line is <code>ABS == INSTANCE ABSpec</code>. A plain <code>INSTANCE ABSpec</code> is illegal here, because it would import a second <code>Spec</code>; TLC reports multiple definitions. Naming the instance imports everything with a prefix, so <code>ABS!Spec</code> is ABSpec's formula. The variables <code>AVar</code> and <code>BVar</code> carry over by name. This is the theorem pattern from {{lesson:implementation}} again.</p>
+<h2>Checking safety needs a bound</h2>
+<p>A and B can send faster than messages are received or lost, so channels can grow without limit. There are infinitely many reachable states, and TLC would run forever. You could change the spec, but you shouldn't have to change a spec to check it. Instead, give TLC a <strong>state constraint</strong>:</p>
+<pre><code>Bound == (Len(AtoB) &lt;= 2) /\ (Len(BtoA) &lt;= 2)</code></pre>
+<!--fig:constraint-->
+<p>Normally TLC takes an unexplored state, computes its successors, and repeats. With a constraint, it first tests the state, and if the test fails it doesn't go on from there. That is a limit on what was checked, so say so when reporting a result. A cfg can't name <code>ABS!Spec</code> directly, so a small wrapper module extends AB and defines <code>HighSafety == ABS!Spec</code>. The Toolbox accepts <code>ABS!Spec</code> in its property list.</p>
+<pre><code>SPECIFICATION Spec
+CONSTANT Data = {d1, d2}
+CONSTRAINT Bound
+INVARIANT TypeOK
+PROPERTY HighSafety</code></pre>
+<p>TLC finds no error: 1286 states generated, 216 distinct, depth 13. With the lecture's model, three data values and channel length at most 3, it finds no error in 960 distinct states.</p>
+<details class="answer"><summary>Predict: delete the bit test from ARcv, so any ack makes A choose a new value. And separately, delete the test from BRcv, so B always copies the head. Which breaks?</summary><p>Only the first. With A broken, TLC reports <code>ABS!Spec</code> violated in five states, shown below. With B broken, this model still gives no error, with the same 216 states. Channels are first-in first-out, so on this model a message carrying B's own bit always equals <code>BVar</code>, and copying it changes nothing. The test that does the work on this model is the one at A. B's test only says, in the spec's terms, when nothing new arrived.</p></details>
+<!--fig:bug-->
+<h2>Liveness: which fairness?</h2>
+<p>The complete spec should imply <code>ABS!FairSpec</code>, with messages that keep getting sent and received. Try the natural candidates, always with the same 216-state model:</p>
+<div class="table-wrap"><table><thead><tr><th>Added to Spec</th><th>Checked against</th><th>TLC says</th></tr></thead><tbody>
+<tr><td>nothing</td><td><code>Delivered</code></td><td>Violated: stops after a value is sent, then stutters.</td></tr>
+<tr><td><code>WF_vars(Next)</code></td><td><code>ABS!FairSpec</code></td><td>Violated: <code>BSnd</code>, <code>LoseMsg</code>, forever.</td></tr>
+<tr><td>WF on all four, no <code>LoseMsg</code></td><td><code>ABS!FairSpec</code></td><td>Violated: the loop below.</td></tr>
+<tr><td><code>FairSpec</code> as printed</td><td><code>ABS!FairSpec</code> and <code>Delivered</code></td><td>No error.</td></tr>
+</tbody></table></div>
+<p><code>WF_vars(Next)</code> is too weak, because <code>Next</code> keeps being satisfied by something useless. So each of the four real actions needs its own requirement. There is none on <code>LoseMsg</code>, since nothing requires messages to be lost. Weak fairness on all four looks plausible, and here is what TLC found:</p>
+<!--fig:weak-->
+<p>Read the fairness conditions against it. <code>ASnd</code>, <code>BSnd</code> and <code>BRcv</code> steps keep occurring. <code>ARcv</code> is enabled in State 3 and disabled again in State 4, so it's never continuously enabled and weak fairness asks nothing of it. Your run may find a different loop; the lecture shows one where messages in both directions get lost. Both have the same cause: <code>LoseMsg</code> keeps disabling a receive.</p>
+<p>Strong fairness from {{lesson:fairness}} closes the gap. <code>BSnd</code> is always enabled, so weak fairness makes B keep sending. Each send enables <code>ARcv</code>, so <code>ARcv</code> is repeatedly enabled, and <code>SF_vars(ARcv)</code> requires it to happen, however often loss disables it. The argument from A to B is symmetric. Strong fairness doesn't stop losses. It says that if you keep sending, something eventually gets through, which is the assumption a lossy channel has to meet to be usable at all.</p>
+<div class="quiz" data-answer="1" data-explain="ASnd and BSnd have no enabling condition, so they are enabled in every state. Continuous enabling is what weak fairness needs."><fieldset><legend>Why is weak fairness enough for ASnd and BSnd?</legend><label><input type="radio" name="q-abp" value="0">Sending is less important than receiving</label><label><input type="radio" name="q-abp" value="1">They are always enabled, so nothing can disable them</label><label><input type="radio" name="q-abp" value="2">TLC cannot check strong fairness on them</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>What good is eventually?</h2>
+<p>Something that happens a million years from now is no use, and you could never observe strong fairness failing. But a spec is a compromise between accuracy and simplicity. Requiring receipt within 4.7 ms would mean specifying delivery times, loss rates, and retransmission rates. And if a message is never received, it isn't received in 4.7 ms. So for systems without hard real-time requirements, liveness checking finds errors that prevent things from happening. Timeouts that exist only so that something eventually happens can be plain actions with weak fairness and no clocks. A failed liveness check can also reveal a safety part that's too strict.</p>
+<h2>While you watch</h2>
+<ul>
+<li>Stop before he runs TLC and predict why the model won't finish. Then change the two <code>SF</code> to <code>WF</code> as he asks and run it.</li>
+<li>His TLC run may produce a different trace from the one above. Check any trace you get the way he does, condition by condition.</li>
+<li>The lab, the five-state bug, and the BRcv experiment are additions; the rest follows the lecture's order.</li>
+</ul>
+<p class="resources"><a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/video/videos.html">Lamport's TLA+ Video Course, lecture 9</a>.</p>

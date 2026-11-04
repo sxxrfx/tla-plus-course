@@ -1,0 +1,64 @@
+<h1>Reduce the model without removing the question.</h1>
+<p class="lead">In {{lesson:transactions}}, a symmetry set took three-manager two-phase commit from 288 states to 80. Now you look at what happens as the model grows, and at when a reduction quietly stops testing what you meant to test.</p>
+<!--fig:chart-->
+<p>Here are real TLC runs of the same two-phase commit spec. If each of n independent variables has k values, their product has kⁿ combinations, and per-process state, messages and histories add dimensions quickly. Good modeling is not a contest to reproduce production. It is a search for the smallest model that still permits the failure you suspect.</p>
+<div class="table-wrap"><table><thead><tr><th>Resource managers</th><th>Distinct states</th><th>With symmetry</th></tr></thead><tbody>
+<tr><td>3</td><td>288</td><td>80</td></tr><tr><td>5</td><td>8,832</td><td>314</td></tr><tr><td>7</td><td>296,448</td><td>920</td></tr><tr><td>8</td><td>1,745,408, in 7 s</td><td>1,461, in 2 min 9 s</td></tr></tbody></table></div>
+<p>The last row is a surprise worth noticing. Symmetry cut the states by a factor of over a thousand and made this run slower, because TLC must consider all 8! = 40,320 permutations to recognize that two states are equivalent. Times are from one laptop; yours will differ, but measure them instead of assuming.</p>
+<h2>Four reductions with different meanings</h2>
+<div class="table-wrap"><table><thead><tr><th>Technique</th><th>What changes</th><th>Question to ask</th></tr></thead><tbody><tr><td>Smaller constants</td><td>Checks a smaller instance</td><td>Can the bug require another participant or round?</td></tr><tr><td>Abstraction</td><td>Removes distinctions</td><td>Are all relevant concrete behaviors represented?</td></tr><tr><td>Symmetry</td><td>Collapses interchangeable identities</td><td>Are those identities interchangeable in the properties too?</td></tr><tr><td>State and action constraints</td><td>Limits exploration</td><td>Which paths have been excluded?</td></tr></tbody></table></div>
+<p>A <strong>constraint</strong>, written <code>CONSTRAINT P</code> in the config, tells TLC not to explore states where P is false. An invariant is a property you test. A constraint prunes the experiment.</p>
+<p>A distinguished leader, a fixed account, or a process-specific progress formula breaks the symmetry you assumed. Do not combine symmetry with liveness checks unless your tools and reasoning explicitly support it; default to unreduced liveness runs.</p>
+<h2>Worked example: a CDN invalidation that loses a race</h2>
+<p>A content service publishes a new article version and invalidates cached copies. The origin serves version 2, but a fetch for version 1 began earlier. One key, one edge cache, two versions and one delayed fetch are enough.</p>
+<!--fig:race-->
+<pre><code>---------------- MODULE CdnRace ----------------
+EXTENDS Naturals
+CONSTANT MaxVersion
+VARIABLES origin, cached, inflight, floor
+vars == &lt;&lt;origin, cached, inflight, floor&gt;&gt;
+Init == /\ origin = 1
+        /\ cached = 1          \* 0 means no cached copy
+        /\ inflight = {}
+        /\ floor = 0           \* invalidated through this version
+Fetch == /\ origin \notin inflight
+         /\ inflight' = inflight \cup {origin}
+         /\ UNCHANGED &lt;&lt;origin, cached, floor&gt;&gt;
+Publish == /\ origin &lt; MaxVersion
+           /\ origin' = origin + 1
+           /\ UNCHANGED &lt;&lt;cached, inflight, floor&gt;&gt;
+Invalidate == /\ floor &lt; origin - 1
+              /\ floor' = origin - 1
+              /\ cached' = IF cached &lt;= floor' THEN 0 ELSE cached
+              /\ UNCHANGED &lt;&lt;origin, inflight&gt;&gt;
+Fill(v) == /\ v \in inflight
+           /\ v &gt; floor
+           /\ cached' = v
+           /\ inflight' = inflight \ {v}
+           /\ UNCHANGED &lt;&lt;origin, floor&gt;&gt;
+Discard(v) == /\ v \in inflight
+              /\ v &lt;= floor
+              /\ inflight' = inflight \ {v}
+              /\ UNCHANGED &lt;&lt;origin, cached, floor&gt;&gt;
+Next == Fetch \/ Publish \/ Invalidate
+        \/ \E v \in inflight: Fill(v) \/ Discard(v)
+Spec == Init /\ [][Next]_vars
+NotResurrected == cached = 0 \/ cached &gt; floor
+Fresh == cached = 0 \/ cached = origin
+================================================</code></pre>
+<p>Here <code>floor</code> records that everything through that version is invalidated, and <code>Fill</code> rejects anything at or below it. A deletion-only design remembers nothing, so it cannot tell a stale fill from a fresh one. Delete the guard <code>v &gt; floor</code> to get that design, and run these experiments:</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Settings</th><th>Distinct states</th><th>NotResurrected</th></tr></thead><tbody>
+<tr><td>Guarded</td><td><code>MaxVersion = 2</code></td><td>18</td><td>Holds</td></tr>
+<tr><td>No guard</td><td><code>MaxVersion = 2</code></td><td>stopped at the error</td><td>Violated in 4 steps</td></tr>
+<tr><td>No guard</td><td><code>MaxVersion = 1</code></td><td>2</td><td>“Holds”</td></tr>
+<tr><td>No guard</td><td><code>MaxVersion = 2</code>, <code>CONSTRAINT Fresh</code></td><td>2</td><td>“Holds”</td></tr></tbody></table></div>
+<p>The two runs in quotation marks are false comfort. With one version nothing can be stale. The constraint case looks more reasonable: <code>Fresh</code> sounds like just the states you care about. But it removes the first state after <code>Publish</code>, so TLC reports “No error has been found” on the buggy design.</p>
+<!--fig:cut-->
+<p>Only 2 states explored, on a model with at least two actions you meant to exercise, is the warning sign. Whenever you add a bound, compare what the run visited with what you expected.</p>
+<details class="answer"><summary>Exercise: you bound retries to one and a duplicate-charge bug disappears. What next?</summary><p>Check whether at least two deliveries are needed to trigger it. Restore that behavior, then reduce some unrelated dimension. A useful reduction preserves the causal path to the property of interest.</p></details>
+<p>The useful reduction here keeps that path and removes the rest. One key is enough, since a thousand URLs add volume but no new cause. Two versions distinguish stale from fresh. A second edge becomes necessary only when the property concerns divergence between edges. This is a causal argument for the bound, not proof that every other bug fits it. The guarded model at <code>MaxVersion</code> 2, 3, 4 and 5 has 18, 82, 290 and 898 states, so raise it to check your argument, while you can still afford to.</p>
+<h2>Measure the right work</h2>
+<p>Track distinct states, generated states, search depth and whether the search finished. TLC stores a fingerprint of each visited state, which is a hash, not the state. Two different states could collide, and one would then go unexplored. So it prints an estimate, for example <code>calculated (optimistic): val = 1.3E-13</code> for the 898-state run. This is why a completed run is a search, not a symbolic proof. Simulation mode (<code>-simulate</code>) samples behaviors and can find bugs in models too large to finish, but a sample with no violation is weaker evidence than a completed search.</p>
+<details class="answer"><summary>Transfer exercise: can you remove message identities from this model?</summary><p>Possibly for the single delayed response, but justify it. If duplicate delivery or retry identity affects whether the cache fills twice, keep enough identity to distinguish those events. Remove fields only after explaining why two states differing solely in that field have equivalent behavior for the property you are checking.</p></details>
+<div class="quiz" data-answer="1" data-explain="A constraint restricts explored behavior. It does not establish that the unrestricted specification respects the bound, as the Fresh run shows."><fieldset><legend>A state constraint removes every state with a negative balance. What did you prove?</legend><label><input type="radio" name="q-scaling" value="0">The design cannot produce a negative balance</label><label><input type="radio" name="q-scaling" value="1">Only a restricted experiment was explored</label><label><input type="radio" name="q-scaling" value="2">All account counts are safe</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<p class="resources"><a target="_blank" rel="noopener noreferrer" href="https://github.com/tlaplus/tlaplus">TLC tools and documentation</a> and the model-checking chapter of <a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/tla/book.html">Specifying Systems</a>.</p>

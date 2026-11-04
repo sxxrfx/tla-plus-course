@@ -1,0 +1,96 @@
+<h1>Separate exclusive access from eventual access.</h1>
+<p class="lead">{{lesson:fairness}} separated safety from liveness, and {{lesson:abp}} introduced strong fairness. A lock needs all of it: no two owners at once, and waiters eventually served. One can hold without the other, and the second depends on which fairness you assume.</p>
+<!--fig:grid-->
+<p>Begin with an abstract owner variable. <code>Acquire</code> assumes an atomic primitive that claims an unowned lock.</p>
+<pre><code>---------------- MODULE Lock ----------------
+EXTENDS Naturals, FiniteSets
+CONSTANTS Processes, NoOwner
+ASSUME NoOwner \notin Processes
+VARIABLES owner, pc
+vars == &lt;&lt;owner, pc&gt;&gt;
+Init == /\ owner = NoOwner
+        /\ pc = [p \in Processes |-&gt; "outside"]
+Request(p) ==
+    /\ pc[p] = "outside"
+    /\ pc' = [pc EXCEPT ![p] = "waiting"]
+    /\ UNCHANGED owner
+Acquire(p) ==
+    /\ owner = NoOwner
+    /\ pc[p] = "waiting"
+    /\ owner' = p
+    /\ pc' = [pc EXCEPT ![p] = "critical"]
+Release(p) ==
+    /\ owner = p
+    /\ owner' = NoOwner
+    /\ pc' = [pc EXCEPT ![p] = "outside"]
+Next == \E p \in Processes: Request(p) \/ Acquire(p) \/ Release(p)
+Spec == Init /\ [][Next]_vars
+MutualExclusion ==
+    Cardinality({p \in Processes : pc[p] = "critical"}) &lt;= 1
+OwnerAgrees == \A p \in Processes: pc[p] = "critical" =&gt; owner = p
+\* Three fairness assumptions, weakest first.
+ReleaseFair == \A p \in Processes: WF_vars(Release(p))
+AggregateWF == ReleaseFair
+    /\ WF_vars(\E p \in Processes: Acquire(p))
+PerProcessWF == ReleaseFair
+    /\ \A p \in Processes: WF_vars(Acquire(p))
+PerProcessSF == ReleaseFair
+    /\ \A p \in Processes: SF_vars(Acquire(p))
+SpecAggregate == Spec /\ AggregateWF
+SpecWF == Spec /\ PerProcessWF
+SpecSF == Spec /\ PerProcessSF
+NoStarvation ==
+    \A p \in Processes: (pc[p] = "waiting") ~&gt; (pc[p] = "critical")
+=============================================</code></pre>
+<p>With <code>Processes = {A, B}</code>, TLC finds 8 distinct states and both safety invariants hold on <code>Spec</code>. Those are the grid’s 8 nodes. The corner where both are critical has no incoming edge, because <code>Acquire</code> requires <code>owner = NoOwner</code>. The useful invariant is the relation <code>OwnerAgrees</code>: a process in the critical section must be the owner.</p>
+<h2>Now the liveness question</h2>
+<p>Safety says nothing about the red cycle. A waits; B requests, acquires and releases; B requests again. <code>NoStarvation</code> uses leads-to from {{lesson:fairness}}, so it asks about every waiter. Here are TLC’s answers:</p>
+<div class="table-wrap"><table><thead><tr><th>Specification</th><th>Assumption added</th><th>NoStarvation</th></tr></thead><tbody>
+<tr><td><code>SpecAggregate</code></td><td>Weak fairness of “some process acquires”</td><td>Violated</td></tr>
+<tr><td><code>SpecWF</code></td><td>Weak fairness of each process’s Acquire</td><td>Violated</td></tr>
+<tr><td><code>SpecSF</code></td><td>Strong fairness of each process’s Acquire</td><td>Holds</td></tr></tbody></table></div>
+<details class="answer"><summary>Predict: why is per-process weak fairness not enough here?</summary><p>Weak fairness only forces an action that stays enabled continuously. On the red cycle, <code>Acquire(A)</code> is enabled in “A wait, B wait” but disabled in “A wait, B crit”, so it is never continuously enabled and A can be skipped forever. Strong fairness also forces an action that is enabled again and again, which is the case here.</p></details>
+<p>Strong fairness here is an assumption about the lock. It does not build anything. A real system earns it with a queueing discipline, or with an algorithm that does the work itself.</p>
+<h2>Without the primitive</h2>
+<p>Suppose the lock is just a shared value, checked in one step and written in the next. This is <code>Look</code> and <code>Take</code> in place of <code>Acquire</code>:</p>
+<pre><code>Look(p) ==
+    /\ pc[p] = "outside"
+    /\ owner = NoOwner
+    /\ pc' = [pc EXCEPT ![p] = "saw-free"]
+    /\ UNCHANGED owner
+Take(p) ==
+    /\ pc[p] = "saw-free"
+    /\ owner' = p
+    /\ pc' = [pc EXCEPT ![p] = "critical"]</code></pre>
+<!--fig:race-->
+<p>It is the {{lesson:inventory}} race again, and TLC reports it after 4 steps. Peterson’s algorithm gets mutual exclusion with only single reads and writes, using a flag for each process and a shared <code>turn</code>. Written in PlusCal from {{lesson:pluscal}}:</p>
+<pre><code>---------------- MODULE Peterson ----------------
+EXTENDS Integers
+(*--algorithm Peterson
+variables flag = [p \in {0, 1} |-&gt; FALSE], turn = 0;
+define
+    MutualExclusion == ~(pc[0] = "cs" /\ pc[1] = "cs")
+    NoStarvation == \A p \in {0, 1}: (pc[p] = "wait") ~&gt; (pc[p] = "cs")
+end define;
+fair process P \in {0, 1}
+begin
+ncs:  while TRUE do
+setf:   flag[self] := TRUE;
+sett:   turn := 1 - self;
+wait:   await ~flag[1 - self] \/ turn = self;
+cs:     skip;
+exit:   flag[self] := FALSE;
+      end while;
+end process;
+end algorithm; *)
+=================================================</code></pre>
+<p>TLC finds 42 distinct states; <code>MutualExclusion</code> holds, and <code>NoStarvation</code> holds with just the weak fairness of <code>fair process</code>. The strong fairness that the abstract lock had to assume is unnecessary here, because <code>turn</code> stops one process winning forever. The order of the writes matters. Swap the <code>setf</code> and <code>sett</code> steps and TLC reports a violation after 8 steps with both processes at <code>cs</code>.</p>
+<h2>Worked architecture: concurrent checkout</h2>
+<p>Two browser requests try to reserve the final concert seat. Request A acquires the lock, reads stock = 1, and pauses. Request B arrives. A lock contract must disable B’s <code>Acquire</code> until A releases, and must not merely discourage it by convention.</p>
+<!--fig:seq-->
+<p>The guard on <code>owner</code> proves nothing about writes that bypass the protocol. In the diagram every arrow to Stock comes from whoever holds the lock, and every stock-changing action in your system must obey that rule.</p>
+<p>Now put A and B on different application servers. A process-local mutex on server 1 does not exclude server 2. Represent that as two owner variables and both requests can enter. Either put ownership in a shared authority with the necessary atomic semantics, or use a storage operation that directly enforces the inventory constraint. The model should describe the shared resource you actually use.</p>
+<p>The failure model comes next. If the owner crashes, <code>owner</code> stays set and everyone waits forever. Clearing it on a timeout is unsafe if the old process can still reach the resource, because a paused process is not a dead one. {{lesson:fencing}} takes this up with leases and fencing tokens.</p>
+<details class="answer"><summary>Predict: can we recover from A crashing by unconditionally clearing owner?</summary><p>Only under assumptions that ensure A cannot continue writing under its old authority. A delayed or paused process is not necessarily dead. Model the resumed write explicitly; otherwise the recovery action may conceal the violation.</p></details>
+<div class="quiz" data-answer="1" data-explain="The red cycle stays inside the safe states. Mutual exclusion holds in every state of it, and A still never enters the critical section."><fieldset><legend>A lock passes MutualExclusion in TLC. What do you know about starvation?</legend><label><input type="radio" name="q-mutex" value="0">It cannot happen</label><label><input type="radio" name="q-mutex" value="1">Nothing: it is a liveness question, checked separately</label><label><input type="radio" name="q-mutex" value="2">It happens only with more than two processes</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<p class="resources">Find mutex algorithms in the <a target="_blank" rel="noopener noreferrer" href="https://github.com/tlaplus/Examples">official example collection</a>.</p>

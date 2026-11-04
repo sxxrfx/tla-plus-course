@@ -1,0 +1,111 @@
+<h1>Inside Paxos Commit is one small agreement problem.</h1>
+<p class="lead">You've seen Paxos Commit run one decision per RM. Each of those decisions is an instance of <strong>consensus</strong>: a group chooses one value, and two different values are never chosen. This lesson separates consensus from commit, then breaks its key rule so you can see why the rule exists.</p>
+<!--fig:ins-->
+<p>Read the diagram from the left. Each RM has its own instance with its own acceptor votes. Commit is a small rule on top of the results: all <code>"prepared"</code> gives Commit, and any <code>"aborted"</code> gives Abort. Everything difficult is in the instances, so you can study one of them alone.</p>
+<h2>While you watch</h2>
+<p>Lecture 7 doesn't teach Paxos as such; Lamport leaves it to the paper. Go back to his remark that the <code>CHOOSE</code> in <code>Phase2a</code> can have several choices that all have the same <code>m.val</code>, and try to explain it. This lesson's experiment gives you the means to. Everything about one instance and Raft here is added to the lecture.</p>
+<h2>One instance</h2>
+<p>The module below cuts <code>PaxosCommit</code> down: no RMs and no <code>ins</code> field. Values are just <code>"X"</code> and <code>"Y"</code>, and with no reports a leader may propose either. Ballots start at 1 since no RM owns ballot 0. Its contract is:</p>
+<pre><code>Chosen(v) == \E b \in Ballot, MS \in Majority :
+               \A a \in MS : [type |-&gt; "2b", bal |-&gt; b, val |-&gt; v, acc |-&gt; a] \in msgs
+Agreement == \A v, w \in Value : Chosen(v) /\ Chosen(w) =&gt; v = w</code></pre>
+<p><code>Chosen</code> is derived from the votes in <code>msgs</code>, so no process has to know it. A value can be chosen while everyone is still unaware. A model where nothing is ever chosen also satisfies <code>Agreement</code>, so progress needs separate assumptions.</p>
+<details class="answer"><summary>Show the complete module</summary><pre><code>----------------------------- MODULE OneDecree ------------------------------
+\* One Paxos consensus instance, cut out of PaxosCommit: the ins field and the
+\* RMs are gone, and with no earlier evidence a leader may propose any value.
+EXTENDS Integers
+Maximum(S) == IF S = {} THEN -1
+                        ELSE CHOOSE n \in S : \A m \in S : n &gt;= m
+CONSTANTS Value, Acceptor, Majority, Ballot
+ASSUME /\ Ballot \subseteq Nat \ {0}
+       /\ \A MS1, MS2 \in Majority : MS1 \cap MS2 # {}
+VARIABLES aState, msgs
+vars == &lt;&lt;aState, msgs&gt;&gt;
+
+Init == /\ aState = [a \in Acceptor |-&gt; [mbal |-&gt; 0, bal |-&gt; -1, val |-&gt; "none"]]
+        /\ msgs = {}
+Send(m) == msgs' = msgs \cup {m}
+
+Phase1a(b) == /\ Send([type |-&gt; "1a", bal |-&gt; b])
+              /\ UNCHANGED aState
+
+Phase1b(a) ==
+  \E m \in msgs :
+    /\ m.type = "1a"
+    /\ aState[a].mbal &lt; m.bal
+    /\ aState' = [aState EXCEPT ![a].mbal = m.bal]
+    /\ Send([type |-&gt; "1b", mbal |-&gt; m.bal, bal |-&gt; aState[a].bal,
+             val |-&gt; aState[a].val, acc |-&gt; a])
+
+Reports(b, MS) == {m \in msgs : /\ m.type = "1b" /\ m.mbal = b /\ m.acc \in MS}
+FromAll(b, MS) == \A a \in MS : \E m \in Reports(b, MS) : m.acc = a
+NotUsed(b) == ~\E m \in msgs : m.type = "2a" /\ m.bal = b
+
+\* The rule that matters: repeat the value of the highest ballot reported.
+Phase2a(b) ==
+  /\ NotUsed(b)
+  /\ \E MS \in Majority, v \in Value :
+       LET maxbal == Maximum({m.bal : m \in Reports(b, MS)})
+       IN  /\ FromAll(b, MS)
+           /\ \/ maxbal = -1
+              \/ \E m \in Reports(b, MS) : m.bal = maxbal /\ m.val = v
+           /\ Send([type |-&gt; "2a", bal |-&gt; b, val |-&gt; v])
+  /\ UNCHANGED aState
+
+\* The broken version: same quorum, but the reports are ignored.
+Phase2aForget(b) ==
+  /\ NotUsed(b)
+  /\ \E MS \in Majority, v \in Value :
+       /\ FromAll(b, MS)
+       /\ Send([type |-&gt; "2a", bal |-&gt; b, val |-&gt; v])
+  /\ UNCHANGED aState
+
+Phase2b(a) ==
+  \E m \in msgs :
+    /\ m.type = "2a"
+    /\ aState[a].mbal &lt;= m.bal
+    /\ aState' = [aState EXCEPT ![a].mbal = m.bal,
+                                ![a].bal  = m.bal,
+                                ![a].val  = m.val]
+    /\ Send([type |-&gt; "2b", bal |-&gt; m.bal, val |-&gt; m.val, acc |-&gt; a])
+
+Next == \/ \E b \in Ballot : Phase1a(b) \/ Phase2a(b)
+        \/ \E a \in Acceptor : Phase1b(a) \/ Phase2b(a)
+NextForget == \/ \E b \in Ballot : Phase1a(b) \/ Phase2aForget(b)
+              \/ \E a \in Acceptor : Phase1b(a) \/ Phase2b(a)
+
+Chosen(v) == \E b \in Ballot, MS \in Majority :
+               \A a \in MS : [type |-&gt; "2b", bal |-&gt; b, val |-&gt; v, acc |-&gt; a] \in msgs
+Agreement == \A v, w \in Value : Chosen(v) /\ Chosen(w) =&gt; v = w
+OneValuePerBallot == \A m1, m2 \in msgs :
+  (m1.type = "2b" /\ m2.type = "2b" /\ m1.bal = m2.bal) =&gt; m1.val = m2.val
+=============================================================================</code></pre><pre><code>INIT Init
+NEXT Next
+CONSTANTS Value = {"X", "Y"}
+          Acceptor = {"A", "B", "C"}
+          Majority = &#123;&#123;"A", "B"}, {"A", "C"}, {"B", "C"}}
+          Ballot = {1, 2}
+INVARIANT Agreement
+INVARIANT OneValuePerBallot
+CHECK_DEADLOCK FALSE</code></pre></details>
+<p>With three acceptors, two values, and ballots <code>{1, 2}</code>, TLC reports <strong>no error, 3921 distinct states</strong>. That run also checks <code>OneValuePerBallot</code>: all votes in one ballot have the same value. The <code>NotUsed</code> guard allows just one <code>2a</code> message per ballot, and acceptors repeat only what it says. That's why the <code>CHOOSE</code> Lamport points at can't matter. Messages with the same highest ballot agree.</p>
+<h2>Worked failure: a new ballot forgets the old vote</h2>
+<p>Now replace <code>Phase2a</code> with <code>Phase2aForget</code>, which still needs reports from a majority but ignores what they say:</p>
+<pre><code>Phase2aForget(b) ==
+  /\ NotUsed(b)
+  /\ \E MS \in Majority, v \in Value :
+       /\ FromAll(b, MS)
+       /\ Send([type |-&gt; "2a", bal |-&gt; b, val |-&gt; v])
+  /\ UNCHANGED aState</code></pre>
+<p>TLC reports <code>Agreement</code> violated in a <strong>13-state</strong> trace. These are its last few states, showing each acceptor's last vote.</p>
+<!--fig:forget-->
+<p>By state 12, A and B voted Y in ballot 2, so Y is chosen. In the last column, C votes X in ballot 1: B's X vote in ballot 1 is still in <code>msgs</code>, so {B, C} also chose X. In state 9 B reported "I voted X in ballot 1" to the ballot 2 leader. That report was the warning, and the broken rule ignored it. The real rule would have made ballot 2 propose X, and then both ballots agree.</p>
+<p>Quorum overlap was present the whole time: {A, B} and {B, C} share B. So overlap alone doesn't save you. It creates a place where evidence can pass between ballots, and the protocol must also obey it. This is the point {{lesson:replication}} ended on: a place to look isn't yet an answer.</p>
+<details class="answer"><summary>Predict: if B restarts and forgets its promise and last vote, is overlap still enough?</summary><p>No. B would report no vote, and the leader of ballot 2 may then propose Y, the same failure by a different path. The spec has no action that loses <code>aState</code>, which is an assumption: those fields must survive a restart. A recovery action in your model must keep exactly what this argument relies on.</p></details>
+<h2>From one value to a log</h2>
+<p>Paxos Commit runs a fixed set of instances, one per RM. A replicated service needs an ordered list of operations, so it runs one consensus decision per log position. Replicas apply chosen operations in order.</p>
+<!--fig:log-->
+<p>In the diagram, a column is one decision. S3 lags behind but it holds no conflicting value in any filled column. Agreement per position is what a replicated log needs, and new questions come with it: who proposes, what happens to entries no majority has, and what can be discarded.</p>
+<p><strong>Raft</strong> is a widely used protocol for replicated logs. It separates leader election, log replication, and safety. A <em>term</em> plays a role like a ballot; it isn't a wall-clock time. To study it, follow one committed entry across a leader crash and an election, and ask what prevents an elected leader from lacking that entry. "A majority elected it" is not the whole answer: Raft restricts which logs can win. Use its published spec rather than reconstructing it from a diagram.</p>
+<div class="quiz" data-answer="1" data-explain="Overlap gives the new ballot a chance to hear about old votes. The Phase2a rule must then respect them, and the acceptors must have kept them."><fieldset><legend>Why is quorum intersection useful in consensus?</legend><label><input type="radio" name="q-consensus" value="0">It makes message delays impossible</label><label><input type="radio" name="q-consensus" value="1">It creates a place where evidence can pass between ballots</label><label><input type="radio" name="q-consensus" value="2">It eliminates the need for durable state</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<p class="resources">Primary sources: <a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/pubs/paxos-simple.pdf">Paxos Made Simple</a> and <a target="_blank" rel="noopener noreferrer" href="https://raft.github.io/raft.pdf">the extended Raft paper</a>. Formal models are in the <a target="_blank" rel="noopener noreferrer" href="https://github.com/tlaplus/Examples">official examples</a>.</p>

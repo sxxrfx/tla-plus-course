@@ -1,0 +1,389 @@
+<h1>Problem set 6: what a commit protocol promises, and what it doesn't.</h1>
+<p class="lead">Lecture 6 turned TCommit into a protocol: records as messages, a grow-only set of messages as the network, and <code>UNCHANGED</code> for frames. These problems change TwoPhase the way real teams do, adding a business rule, a crash, a side effect, and see what breaks. They reuse functions and quantifiers from {{ref:sets}}, the agreement spec of {{ref:ps-l5}}, and TLC's deadlock check from {{lesson:counter}}.</p>
+<p>Most modules here are the lesson's <code>TwoPhase</code> with a few lines changed, and they end with <code>INSTANCE TCommit</code>, so keep <code>TCommit.tla</code> from {{lesson:tcommit}} in the same folder. For trace lengths, run TLC with <code>-workers 1</code>.</p>
+
+<article class="problem" id="ps-l6-booking">
+<p class="problem-meta"><span>Problem 1</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">Travel booking</span></p>
+<h2>A trip where the car is optional</h2>
+<p class="uses">Draws on {{ref:transactions}}, {{ref:tcommit}} and {{ref:sets}}.</p>
+<p>A travel site sells trips: a flight, a hotel and a rental car, each booked in a different supplier's system. The booking service runs two-phase commit exactly as the <code>TwoPhase</code> spec in {{lesson:transactions}} describes. It is the TM, and the three suppliers are RMs. Preparing means a supplier holds the seat, room or car. A product manager asks for a change: “The car is optional. If the car supplier can't confirm, book the trip without it.” A developer implements it with one line in <code>TMCommit</code>:</p>
+<pre><code>TMCommit ==
+  /\ tmState = "init"
+  /\ {"flight", "hotel"} \subseteq tmPrepared   \* the car is optional
+  /\ tmState' = "done"
+  /\ msgs' = msgs \cup {[type |-&gt; "Commit"]}
+  /\ UNCHANGED &lt;&lt;rmState, tmPrepared&gt;&gt;</code></pre>
+<p>Everything else is the lesson's <code>TwoPhase</code>, renamed <code>PSl6_Booking</code>. The config uses <code>CONSTANT RM = {"flight", "hotel", "car"}</code>, the invariants <code>TPTypeOK</code> and <code>TCConsistent</code>, and <code>CHECK_DEADLOCK FALSE</code>.</p>
+<ol class="tasks" type="a">
+<li>Run the unchanged <code>TwoPhase</code> with these three RMs first. What do you expect for the state count, and why?</li>
+<li>Make the change and run TLC. Explain the trace.</li>
+<li>Add this invariant, which says that an RM commits only after it prepared, and run again with it as the only invariant besides <code>TPTypeOK</code>. What does TLC find? Why does the lesson's <code>TwoPhase</code> get away with no guard in <code>RMRcvCommitMsg</code>?
+<pre><code>CommitAfterPrepare == \A r \in RM : rmState[r] = "committed"
+                         =&gt; [type |-&gt; "Prepared", rm |-&gt; r] \in msgs</code></pre></li>
+<li>Propose a design that meets the product manager's request and keeps <code>TCConsistent</code> true.</li>
+</ol>
+<div class="numcheck" data-answer="8|eight" data-explain="Prepare and receive for the flight, the same for the hotel, TMCommit, the flight receives Commit, and the car, still working, aborts on its own: 7 steps, 8 states." data-retry="Use -workers 1, and count the initial state."><label>States in TLC's trace with the optional car <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="2" data-explain="TMCommit requires every RM to be in tmPrepared, and an RM gets there only by sending Prepared. So whenever a Commit message exists, every RM has prepared, and the receive action needs no guard of its own. The developer's change broke an assumption that the other actions relied on."><fieldset><legend>Why can <code>RMRcvCommitMsg</code> in the lesson's spec omit a guard on <code>rmState[r]</code>?</legend><label><input type="radio" name="q-ps-l6-booking" value="0">Receiving a message twice is harmless</label><label><input type="radio" name="q-ps-l6-booking" value="1">An RM ignores a Commit it didn't expect</label><label><input type="radio" name="q-ps-l6-booking" value="2">A Commit message exists only after every RM has prepared</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Once the Commit message is in <code>msgs</code>, what can the car do while it is still working? Look at the guards of <code>RMChooseToAbort</code> and <code>RMRcvCommitMsg</code>.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong> No error and 288 distinct states, the lesson's count. The RMs' names don't matter, only how many there are.</p>
+<p><strong>(b)</strong> TLC reports <code>Invariant TCConsistent is violated</code> with an 8-state trace:</p>
+<!--fig:booking-->
+<p>The flight and hotel prepare and the TM records both. That is enough for the new guard, so the TM commits, and the flight receives Commit. The car never prepared, so <code>RMChooseToAbort("car")</code> is still enabled, and it aborts. One RM committed and another aborted, which TCommit forbids. In business terms this might even be the outcome the product manager wanted. But the spec claimed all or nothing for three RMs, and the code now does something else. The problem is the mismatch.</p>
+<p><strong>(c)</strong> TLC reports <code>Invariant CommitAfterPrepare is violated</code> with a 7-state trace that ends in <code>RMRcvCommitMsg("car")</code>: the car, still working, receives Commit and becomes committed without ever having held a car. In the lesson's spec the invariant holds (TLC: no error, 288 states, module <code>PSl6_BookingOrig</code>), because a Commit message can only exist once every RM is in <code>tmPrepared</code>. <code>RMRcvCommitMsg</code> relies on <code>TMCommit</code>'s guard. Change that guard and every receive action becomes wrong too, even though nobody touched it.</p>
+<p><strong>(d)</strong> Make the transaction say what the business means. Run two-phase commit over <code>RM = {"flight", "hotel"}</code>, the parts that must succeed together. TLC: no error in 56 states. Then book the car as a separate step after the trip commits, and if that fails, tell the customer. If the car really must be all-or-nothing with the rest, it has to stay an RM, and the trip aborts when the car can't be held. Either way the spec and the code agree on which RMs share a fate.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l6-prepared">
+<p class="problem-meta"><span>Problem 2</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Databases</span></p>
+<h2>Postgres prepared transactions and a dead coordinator</h2>
+<p class="uses">Draws on {{ref:transactions}}, {{ref:messages}} and {{ref:counter}}.</p>
+<p>An app server writes an order to one Postgres database and a payment to another, using Postgres's own two-phase commit. On each database it runs <code>PREPARE TRANSACTION 'tx42'</code>, then <code>COMMIT PREPARED 'tx42'</code> on both, or <code>ROLLBACK PREPARED 'tx42'</code>. A prepared transaction is stored on disk, survives a database restart, and keeps every lock it holds until one of those two commands arrives. If the app server's session drops before <code>PREPARE TRANSACTION</code>, Postgres rolls the transaction back. Meanwhile a nightly report session wants to update a row the payment locked.</p>
+<p>The model is <code>TwoPhase</code> with the app server as the TM and three changes. The TM can crash and stay down (<code>TMCrash</code>), and an RM can prepare only while the TM is up. A <code>report</code> variable models the waiting session. A <code>Finished</code> action marks the intended end, so that the deadlock check can stay on. A constant <code>DBA</code> picks what a database administrator may do by hand while the app server is down.</p>
+<details class="answer"><summary>The module (open to copy)</summary>
+<pre><code>---------------------------- MODULE PSl6_Prepared ----------------------------
+CONSTANTS RM,            \* the Postgres databases in the transaction
+          DBA            \* the DBA's rule: "never", "blind", or "checklog"
+VARIABLES
+  rmState,               \* rmState[r] is the state of r's transaction
+  tmState,               \* the app server: "init", "done", or "down"
+  tmPrepared,            \* the databases the app server knows are prepared
+  msgs,                  \* every message ever sent
+  report                 \* a session on "payments" blocked on a row lock
+vars == &lt;&lt;rmState, tmState, tmPrepared, msgs, report&gt;&gt;
+
+Messages == [type : {"Prepared"}, rm : RM] \cup [type : {"Commit", "Abort"}]
+
+TypeOK ==
+  /\ rmState \in [RM -&gt; {"working", "prepared", "committed", "aborted"}]
+  /\ tmState \in {"init", "done", "down"}
+  /\ tmPrepared \subseteq RM
+  /\ msgs \subseteq Messages
+  /\ report \in {"waiting", "done"}
+
+Init ==
+  /\ rmState = [r \in RM |-&gt; "working"]
+  /\ tmState = "init"
+  /\ tmPrepared = {}
+  /\ msgs = {}
+  /\ report = "waiting"
+-----------------------------------------------------------------------------
+TMRcvPrepared(r) ==
+  /\ tmState = "init"
+  /\ [type |-&gt; "Prepared", rm |-&gt; r] \in msgs
+  /\ tmPrepared' = tmPrepared \cup {r}
+  /\ UNCHANGED &lt;&lt;rmState, tmState, msgs, report&gt;&gt;
+
+TMCommit ==                                  \* COMMIT PREPARED on each database
+  /\ tmState = "init"
+  /\ tmPrepared = RM
+  /\ tmState' = "done"
+  /\ msgs' = msgs \cup {[type |-&gt; "Commit"]}
+  /\ UNCHANGED &lt;&lt;rmState, tmPrepared, report&gt;&gt;
+
+TMAbort ==                                   \* ROLLBACK PREPARED on each database
+  /\ tmState = "init"
+  /\ tmState' = "done"
+  /\ msgs' = msgs \cup {[type |-&gt; "Abort"]}
+  /\ UNCHANGED &lt;&lt;rmState, tmPrepared, report&gt;&gt;
+
+TMCrash ==                                   \* the app server dies and stays down
+  /\ tmState # "down"
+  /\ tmState' = "down"
+  /\ UNCHANGED &lt;&lt;rmState, tmPrepared, msgs, report&gt;&gt;
+
+RMPrepare(r) ==                \* the app server's PREPARE TRANSACTION succeeds
+  /\ tmState = "init"
+  /\ rmState[r] = "working"
+  /\ rmState' = [rmState EXCEPT ![r] = "prepared"]
+  /\ msgs' = msgs \cup {[type |-&gt; "Prepared", rm |-&gt; r]}
+  /\ UNCHANGED &lt;&lt;tmState, tmPrepared, report&gt;&gt;
+
+RMChooseToAbort(r) ==          \* an error, or the app server's session is lost
+  /\ rmState[r] = "working"
+  /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
+  /\ UNCHANGED &lt;&lt;tmState, tmPrepared, msgs, report&gt;&gt;
+
+RMRcvCommitMsg(r) ==
+  /\ [type |-&gt; "Commit"] \in msgs
+  /\ rmState' = [rmState EXCEPT ![r] = "committed"]
+  /\ UNCHANGED &lt;&lt;tmState, tmPrepared, msgs, report&gt;&gt;
+
+RMRcvAbortMsg(r) ==
+  /\ [type |-&gt; "Abort"] \in msgs
+  /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
+  /\ UNCHANGED &lt;&lt;tmState, tmPrepared, msgs, report&gt;&gt;
+
+\* The report's UPDATE waits for the row lock until the transaction ends.
+ReportRuns ==
+  /\ report = "waiting"
+  /\ rmState["payments"] \in {"committed", "aborted"}
+  /\ report' = "done"
+  /\ UNCHANGED &lt;&lt;rmState, tmState, tmPrepared, msgs&gt;&gt;
+
+\* ROLLBACK PREPARED by hand while the app server is down. "blind": anything
+\* still prepared. "checklog": only if the app server's log has no Commit.
+DBARollback(r) ==
+  /\ \/ DBA = "blind"
+     \/ DBA = "checklog" /\ [type |-&gt; "Commit"] \notin msgs
+  /\ tmState = "down"
+  /\ rmState[r] = "prepared"
+  /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
+  /\ UNCHANGED &lt;&lt;tmState, tmPrepared, msgs, report&gt;&gt;
+
+\* An intended stop: every transaction has ended and the report has run.
+Finished ==
+  /\ \A r \in RM : rmState[r] \in {"committed", "aborted"}
+  /\ report = "done"
+  /\ UNCHANGED vars
+-----------------------------------------------------------------------------
+Next ==
+  \/ TMCommit \/ TMAbort \/ TMCrash \/ ReportRuns \/ Finished
+  \/ \E r \in RM : \/ TMRcvPrepared(r) \/ RMPrepare(r) \/ RMChooseToAbort(r)
+                   \/ RMRcvCommitMsg(r) \/ RMRcvAbortMsg(r) \/ DBARollback(r)
+-----------------------------------------------------------------------------
+INSTANCE TCommit
+=============================================================================</code></pre>
+<p>The config, with the deadlock check on:</p>
+<pre><code>INIT Init
+NEXT Next
+CONSTANTS RM = {"orders", "payments"}
+          DBA = "never"
+INVARIANT TypeOK
+INVARIANT TCConsistent</code></pre></details>
+<ol class="tasks" type="a">
+<li>Why is <code>Finished</code> needed for the deadlock check to mean anything here? (Compare the terminating counter in {{lesson:counter}}.)</li>
+<li>Run TLC with <code>DBA = "never"</code>. What does it report? Describe the final state in Postgres terms: what holds locks, and who waits?</li>
+<li>The on-call DBA's runbook says: “If the app server is down, run <code>ROLLBACK PREPARED</code> on anything still prepared.” Run with <code>DBA = "blind"</code>. What breaks, and why can't the payments database alone tell the DBA what to do?</li>
+<li>Run with <code>DBA = "checklog"</code>, where the DBA rolls back only if the app server's log contains no Commit decision. What does TLC report?</li>
+</ol>
+<div class="numcheck" data-answer="4|four" data-explain="RMPrepare(orders), RMPrepare(payments), TMCrash. Both databases are prepared, no Commit or Abort was sent, and the TM is down, so no action is enabled." data-retry="Use -workers 1, and count the initial state."><label>States in TLC's trace with <code>DBA = "never"</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="9|nine" data-explain="Both prepare and the TM records both (4 steps), TMCommit, TMCrash, orders receives Commit, and the DBA rolls back payments: 8 steps, 9 states." data-retry="Use -workers 1, and count the initial state."><label>States in TLC's trace with <code>DBA = "blind"</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>In <code>TwoPhase</code>, after the TM decides, <code>RMRcvCommitMsg</code> or <code>RMRcvAbortMsg</code> stays enabled forever, so TLC never sees a stop. Here, which states have no enabled action? For (c), remember that a message in <code>msgs</code> may never be received: that is how the model says it was lost.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong> A run in which both transactions end and the report finishes is supposed to stop. Without <code>Finished</code>, TLC would report that intended stop as a deadlock, and you would have to turn the check off, which also hides the stops you care about. <code>Finished</code> is enabled exactly in the good final states and changes nothing, so any deadlock TLC reports is a state where work is left undone.</p>
+<p><strong>(b)</strong> TLC reports <code>Deadlock reached</code> with a 4-state trace:</p>
+<!--fig:prepared-->
+<p>Both databases prepared, and then the app server died before deciding. Each database holds a prepared <code>tx42</code> with its row locks. Nothing in Postgres will resolve it: the protocol gives a prepared participant no step of its own. The report's <code>UPDATE</code> waits on the payment row, indefinitely. Postgres's documentation warns against leaving transactions prepared for long, because they also stop <code>VACUUM</code> from reclaiming storage. You can list them in the <code>pg_prepared_xacts</code> view. This is the blocking problem the lab in {{lesson:transactions}} showed, now as a TLC trace.</p>
+<p><strong>(c)</strong> TLC reports <code>Invariant TCConsistent is violated</code> with a 9-state trace. Both databases prepare, the app server commits and sends Commit, then crashes. Orders receives Commit and commits. Payments never gets its Commit (in the model, that message is never received), and the DBA, following the runbook, rolls it back. An order with no payment. From inside the payments database, “prepared and the coordinator is down” looks the same whether or not a Commit decision exists. The information the DBA needs is the decision, and that lives in the coordinator's log, not in this database.</p>
+<p><strong>(d)</strong> No error and 194 distinct states, and no deadlock. If the log has no Commit, nobody can have committed, so a rollback is safe. If it does, the Commit message stays in <code>msgs</code>, and receiving it models the DBA running <code>COMMIT PREPARED</code>. Resolving a prepared transaction by hand is safe only with the decision in hand. Real transaction managers write their decision to durable storage before sending it, so that they, or a person, can finish the job after a crash.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l6-receipts">
+<p class="problem-meta"><span>Problem 3</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Messaging</span></p>
+<h2>Receipt emails over an at-least-once queue</h2>
+<p class="uses">Draws on {{ref:messages}}, {{ref:transactions}} and {{ref:sets}}.</p>
+<p>After an order commits, the order service publishes a “send receipt” message to a queue, and an email worker consumes it. The queue behaves like Amazon SQS standard queues: delivery is at least once, ordering is best effort, and a message that isn't acknowledged within its visibility timeout is delivered again. The model below uses the grow-only <code>msgs</code> from {{lesson:messages}}. The constant <code>Mode</code> picks how the worker handles a delivery. <code>emailed</code> is the worker's table of orders it has emailed.</p>
+<details class="answer"><summary>The module (open to copy)</summary>
+<pre><code>----------------------------- MODULE PSl6_Receipts -----------------------------
+EXTENDS Integers
+CONSTANT Mode            \* how the email worker handles a delivery:
+                         \* "naive", "atomic", or "twostep"
+Orders == {"o1", "o2"}   \* o1 is placed before o2
+Receipt(o) == [type |-&gt; "receipt", order |-&gt; o]
+VARIABLES
+  msgs,                  \* every message ever published to the queue
+  sent,                  \* sent[o]: receipt emails sent for order o
+  emailed                \* orders the worker's table records as emailed
+vars == &lt;&lt;msgs, sent, emailed&gt;&gt;
+
+TypeOK == /\ msgs \subseteq [type : {"receipt"}, order : Orders]
+          /\ sent \in [Orders -&gt; 0..2]
+          /\ emailed \subseteq Orders
+
+Init == /\ msgs = {}
+        /\ sent = [o \in Orders |-&gt; 0]
+        /\ emailed = {}
+
+\* The order service publishes after each order commits, o1 first.
+Publish(o) == /\ Receipt(o) \notin msgs
+              /\ o = "o2" =&gt; Receipt("o1") \in msgs
+              /\ msgs' = msgs \cup {Receipt(o)}
+              /\ UNCHANGED &lt;&lt;sent, emailed&gt;&gt;
+
+SendEmail(o) == sent' = [sent EXCEPT ![o] = sent[o] + 1]
+
+\* The queue hands o's receipt message to the worker (again, possibly).
+Deliver(o) ==
+  /\ Receipt(o) \in msgs
+  /\ sent[o] &lt; 2                          \* keeps the model finite
+  /\ \/ /\ Mode = "naive"
+        /\ SendEmail(o)
+        /\ UNCHANGED emailed
+     \/ /\ Mode = "atomic"                \* check, send, record: one step
+        /\ o \notin emailed
+        /\ SendEmail(o)
+        /\ emailed' = emailed \cup {o}
+     \/ /\ Mode = "twostep"               \* check and send; record later
+        /\ o \notin emailed
+        /\ SendEmail(o)
+        /\ UNCHANGED emailed
+  /\ UNCHANGED msgs
+
+\* twostep only: the worker writes "emailed" after the provider accepts.
+Record(o) == /\ Mode = "twostep"
+             /\ sent[o] &gt; 0
+             /\ o \notin emailed
+             /\ emailed' = emailed \cup {o}
+             /\ UNCHANGED &lt;&lt;msgs, sent&gt;&gt;
+
+Next == \E o \in Orders : Publish(o) \/ Deliver(o) \/ Record(o)
+
+OneEmail == \A o \in Orders : sent[o] =&lt; 1
+InOrder  == sent["o2"] &gt; 0 =&gt; sent["o1"] &gt; 0
+=============================================================================</code></pre>
+<p>The config for the first run:</p>
+<pre><code>INIT Init
+NEXT Next
+CONSTANT Mode = "naive"
+INVARIANT TypeOK
+INVARIANT OneEmail
+CHECK_DEADLOCK FALSE</code></pre></details>
+<p>Notice what is <em>not</em> in the module: no action duplicates, delays or reorders messages. <code>Deliver(o)</code> only requires the message to be in <code>msgs</code>.</p>
+<ol class="tasks" type="a">
+<li>Run with <code>Mode = "naive"</code>. Where in the module does the duplicate come from?</li>
+<li>Run with <code>Mode = "atomic"</code>. What does TLC report? What does putting the check, the email and the record in one step claim about the real worker?</li>
+<li>Run with <code>Mode = "twostep"</code>, the honest version: the worker checks the table, calls the email API, and records the order afterwards. What happens?</li>
+<li>With <code>Mode = "atomic"</code>, add <code>INVARIANT InOrder</code>. What does TLC find? Does a receipt service need to care?</li>
+</ol>
+<div class="numcheck" data-answer="4|four" data-explain="Publish(o1), Deliver(o1), Deliver(o1). The message stays in msgs after the first delivery, so Deliver(o1) is still enabled." data-retry="Use -workers 1, and count the initial state."><label>States in TLC's trace with <code>Mode = "naive"</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="3" data-explain="Delay, reordering, duplicates and loss all come from Deliver needing only membership in msgs. A message can be delivered only if it was published, so a receipt for an order nobody published can't be delivered. Modeling a forged or corrupted message would need an extra action."><fieldset><legend>Which of these can't happen in this model of the queue?</legend><label><input type="radio" name="q-ps-l6-receipts" value="0">o1's receipt is delivered twice</label><label><input type="radio" name="q-ps-l6-receipts" value="1">o2's receipt is delivered before o1's</label><label><input type="radio" name="q-ps-l6-receipts" value="2">o1's receipt is never delivered</label><label><input type="radio" name="q-ps-l6-receipts" value="3">A receipt is delivered for an order that was never published</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Look for what removes a message from <code>msgs</code>, or disables <code>Deliver(o)</code> once it has run. In <code>"twostep"</code>, which action has to happen between the two deliveries to prevent the second email?</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong> TLC reports <code>Invariant OneEmail is violated</code> with a 4-state trace: <code>Publish("o1")</code>, <code>Deliver("o1")</code>, <code>Deliver("o1")</code>. Nothing removes a message from <code>msgs</code>, so <code>Deliver("o1")</code> stays enabled. That is the lesson's point about one reader and many receipts, with an effect, an email, that isn't harmless to repeat. You got duplicate delivery without writing a line for it.</p>
+<p><strong>(b)</strong> No error, 7 distinct states. The second delivery finds <code>"o1" \in emailed</code> and is disabled. But the step claims that checking the table, calling the email API, and writing the table happen as one indivisible event. A database transaction can make the check and the write atomic. It can't include a call to an external email service.</p>
+<p><strong>(c)</strong> TLC reports <code>OneEmail</code> violated, again in 4 states: <code>Publish</code>, then <code>Deliver("o1")</code> twice, before <code>Record("o1")</code> ever runs.</p>
+<!--fig:receipts-->
+<p>In SQS terms, the worker took longer than the visibility timeout, or crashed after sending and before recording, and the queue handed the message to another delivery. Your table can make duplicates rarer. It can't rule them out, because the gap between the external effect and the record is real. The usual way out is to give the email provider an idempotency key such as the order id and let it deduplicate, or to accept that a customer may occasionally get two receipts. Which one is right is a product decision, and the model has made it a visible one.</p>
+<p><strong>(d)</strong> TLC reports <code>InOrder</code> violated with a 4-state trace: <code>Publish("o1")</code>, <code>Publish("o2")</code>, <code>Deliver("o2")</code>. The set model includes reordering for free, which matches the queue's best-effort ordering. Receipts don't need order, so you'd delete the invariant. A consumer that applies successive updates to the same record would care. It would need a sequence and an ordered channel, which the course models with the alternating bit protocol in Lecture 9.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l6-stock">
+<p class="problem-meta"><span>Problem 4 · Synthesis</span><span class="level" title="Difficulty 3 of 3">●●●</span><span class="domain">Databases</span></p>
+<h2>Reserving stock in two warehouses</h2>
+<p class="uses">Draws on {{ref:transactions}}, {{ref:messages}}, {{ref:sets}}, {{ref:actions}}, and the schema-agreement problem in {{ref:ps-l5}}.</p>
+<p>An online shop fulfils an order from two warehouses, east and west, one unit from each. Each warehouse's inventory database is an RM in two-phase commit, and the order service is the TM. Preparing reserves a unit: it leaves the shelf count and is held for this order. Committing ships the held unit. Aborting must cancel the reservation and put the unit back. A developer adds a <code>stock</code> variable to <code>TwoPhase</code>, with these changes:</p>
+<pre><code>RMPrepare(r) ==
+  /\ rmState[r] = "working"
+  /\ stock[r] &gt; 0
+  /\ rmState' = [rmState EXCEPT ![r] = "prepared"]
+  /\ stock' = [stock EXCEPT ![r] = stock[r] - 1]
+  /\ msgs' = msgs \cup {[type |-&gt; "Prepared", rm |-&gt; r]}
+  /\ UNCHANGED &lt;&lt;tmState, tmPrepared&gt;&gt;
+
+RMRcvAbortMsg(r) ==
+  /\ [type |-&gt; "Abort"] \in msgs
+  /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
+  /\ stock' = [stock EXCEPT ![r] = stock[r] + 1]
+  /\ UNCHANGED &lt;&lt;tmState, tmPrepared, msgs&gt;&gt;</code></pre>
+<p>Every other action has <code>stock</code> in its <code>UNCHANGED</code> list, <code>TypeOK</code> requires <code>stock \in [RM -&gt; 0..Stock0]</code> with <code>Stock0 == 1</code>, and the module ends with <code>INSTANCE TCommit</code>. The fixed module is in the solution; the developer's version differs only in <code>RMRcvAbortMsg</code>.</p>
+<ol class="tasks" type="a">
+<li>Write <code>Conservation</code>: for every warehouse, the units on the shelf plus the units held or shipped for this order equal <code>Stock0</code>. A helper <code>Held(w)</code>, which is 1 when <code>w</code> is prepared or committed and 0 otherwise, makes it short.</li>
+<li>Run TLC with <code>CONSTANT RM = {"east", "west"}</code>, listing <code>INVARIANT Conservation</code> first, then <code>TypeOK</code> and <code>TCConsistent</code>, with <code>CHECK_DEADLOCK FALSE</code>. Explain the trace.</li>
+<li>Compare with the schema-agreement problem in {{ref:ps-l5}}, where <code>Agreement</code> and <code>ReadersReady</code> were the requirements. Does <code>TCConsistent</code> catch this bug?</li>
+<li>A reviewer suggests releasing stock only if <code>rmState[r] # "working"</code>. Try it. Then write a fix that works, and check it with two and with three warehouses.</li>
+</ol>
+<div class="numcheck" data-answer="3|three" data-explain="TMAbort, then RMRcvAbortMsg(east) while east is still working: east never reserved a unit, but the release puts one back, so its shelf shows 2." data-retry="Use -workers 1, and count the initial state."><label>States in TLC's trace for the developer's module <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="0" data-explain="The bug changes only stock, and TCConsistent talks only about rmState. The decisions are still consistent: everyone aborted. The data those decisions were supposed to protect is wrong. A bounded run (shelf counts up to 4) confirms that TCConsistent holds."><fieldset><legend>Does <code>TCConsistent</code> catch the bug?</legend><label><input type="radio" name="q-ps-l6-stock" value="0">No: it holds in every reachable state, because it mentions only <code>rmState</code></label><label><input type="radio" name="q-ps-l6-stock" value="1">Yes: it fails in the same state as <code>Conservation</code></label><label><input type="radio" name="q-ps-l6-stock" value="2">Yes, but only with three warehouses</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="288|two hundred eighty-eight" data-explain="The same as TwoPhase with three RMs. In the fixed model, stock[w] always equals Stock0 - Held(w), so stock is determined by rmState and adds no new states." data-retry="Run your fixed module with CONSTANT RM = {&quot;east&quot;, &quot;west&quot;, &quot;north&quot;}."><label>Distinct states of the fixed module with three warehouses <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Which RMs can receive an Abort message? In <code>TwoPhase</code>, receiving the same message twice was harmless because setting <code>rmState[r]</code> to <code>"aborted"</code> again changes nothing. Is <code>stock[r] + 1</code> like that? The release should depend on what this particular step undoes.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong></p>
+<pre><code>Held(w) == IF rmState[w] \in {"prepared", "committed"} THEN 1 ELSE 0
+
+Conservation == \A w \in RM : stock[w] + Held(w) = Stock0</code></pre>
+<p><strong>(b)</strong> TLC reports <code>Invariant Conservation is violated</code> with a 3-state trace: <code>TMAbort</code>, then <code>RMRcvAbortMsg("east")</code> while east is still working. East never reserved anything, but the release adds a unit, so its shelf shows 2. TLC checks the invariants in the order the config lists them. With <code>TypeOK</code> listed first it reports <code>TypeOK</code> violated in the same 3 states, since 2 isn't in <code>0..Stock0</code>. In <code>TwoPhase</code>, an Abort can reach any RM, prepared or not, and any number of times. Those receives were safe only because they had no effect beyond setting <code>rmState</code>.</p>
+<p><strong>(c)</strong> No. <code>TCConsistent</code> mentions only <code>rmState</code>, and this change never affects <code>rmState</code>. With shelf counts bounded at 4, TLC confirms it: no error in 245 states. The decision was abort and nobody committed, so agreement holds, and the inventory is wrong anyway. In the schema problem of {{ref:ps-l5}}, agreement wasn't enough either, and <code>ReadersReady</code> was the requirement that mattered. Here it is <code>Conservation</code>. A commit protocol guarantees agreement on the decision, and the effects you attach to the decision need their own invariant.</p>
+<p><strong>(d)</strong> The reviewer's guard isn't enough. TLC finds a 4-state trace: <code>TMAbort</code>, east aborts on its own with <code>RMChooseToAbort</code>, then receives Abort and releases a unit it never reserved.</p>
+<!--fig:stock-->
+<p>A duplicate delivery to a prepared warehouse is a third route: prepare, TM aborts, receive Abort (correct release), receive it again (second release). The fix releases exactly when this step undoes a reservation, that is, when the RM is prepared:</p>
+<pre><code>------------------------------ MODULE PSl6_StockFixed ------------------------------
+EXTENDS Integers
+CONSTANT RM              \* the warehouses; the order needs one unit from each
+Stock0 == 1              \* units each warehouse has on the shelf at the start
+VARIABLES rmState, tmState, tmPrepared, msgs,
+          stock          \* stock[w]: units on the shelf at w, not reserved
+vars == &lt;&lt;rmState, tmState, tmPrepared, msgs, stock&gt;&gt;
+
+Messages == [type : {"Prepared"}, rm : RM] \cup [type : {"Commit", "Abort"}]
+
+TypeOK ==
+  /\ rmState \in [RM -&gt; {"working", "prepared", "committed", "aborted"}]
+  /\ tmState \in {"init", "done"}
+  /\ tmPrepared \subseteq RM
+  /\ msgs \subseteq Messages
+  /\ stock \in [RM -&gt; 0..Stock0]
+
+Init ==
+  /\ rmState = [r \in RM |-&gt; "working"]
+  /\ tmState = "init"
+  /\ tmPrepared = {}
+  /\ msgs = {}
+  /\ stock = [r \in RM |-&gt; Stock0]
+-----------------------------------------------------------------------------
+TMRcvPrepared(r) ==
+  /\ tmState = "init"
+  /\ [type |-&gt; "Prepared", rm |-&gt; r] \in msgs
+  /\ tmPrepared' = tmPrepared \cup {r}
+  /\ UNCHANGED &lt;&lt;rmState, tmState, msgs, stock&gt;&gt;
+
+TMCommit ==
+  /\ tmState = "init"
+  /\ tmPrepared = RM
+  /\ tmState' = "done"
+  /\ msgs' = msgs \cup {[type |-&gt; "Commit"]}
+  /\ UNCHANGED &lt;&lt;rmState, tmPrepared, stock&gt;&gt;
+
+TMAbort ==
+  /\ tmState = "init"
+  /\ tmState' = "done"
+  /\ msgs' = msgs \cup {[type |-&gt; "Abort"]}
+  /\ UNCHANGED &lt;&lt;rmState, tmPrepared, stock&gt;&gt;
+
+\* Prepare = reserve: take a unit off the shelf and hold it for this order.
+RMPrepare(r) ==
+  /\ rmState[r] = "working"
+  /\ stock[r] &gt; 0
+  /\ rmState' = [rmState EXCEPT ![r] = "prepared"]
+  /\ stock' = [stock EXCEPT ![r] = stock[r] - 1]
+  /\ msgs' = msgs \cup {[type |-&gt; "Prepared", rm |-&gt; r]}
+  /\ UNCHANGED &lt;&lt;tmState, tmPrepared&gt;&gt;
+
+RMChooseToAbort(r) ==
+  /\ rmState[r] = "working"
+  /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
+  /\ UNCHANGED &lt;&lt;tmState, tmPrepared, msgs, stock&gt;&gt;
+
+\* Commit = ship the held unit. The shelf count doesn't change.
+RMRcvCommitMsg(r) ==
+  /\ [type |-&gt; "Commit"] \in msgs
+  /\ rmState' = [rmState EXCEPT ![r] = "committed"]
+  /\ UNCHANGED &lt;&lt;tmState, tmPrepared, msgs, stock&gt;&gt;
+
+\* Abort = cancel the reservation and put the unit back on the shelf.
+RMRcvAbortMsg(r) ==
+  /\ [type |-&gt; "Abort"] \in msgs
+  /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
+  /\ stock' = IF rmState[r] = "prepared"
+                THEN [stock EXCEPT ![r] = stock[r] + 1]
+                ELSE stock
+  /\ UNCHANGED &lt;&lt;tmState, tmPrepared, msgs&gt;&gt;
+-----------------------------------------------------------------------------
+Next ==
+  \/ TMCommit \/ TMAbort
+  \/ \E r \in RM : TMRcvPrepared(r) \/ RMPrepare(r) \/ RMChooseToAbort(r)
+                     \/ RMRcvCommitMsg(r) \/ RMRcvAbortMsg(r)
+-----------------------------------------------------------------------------
+INSTANCE TCommit
+
+Held(w) == IF rmState[w] \in {"prepared", "committed"} THEN 1 ELSE 0
+
+\* Every unit is on the shelf, or held or shipped for this order.
+Conservation == \A w \in RM : stock[w] + Held(w) = Stock0
+=============================================================================</code></pre>
+<p>TLC finds no error: 56 distinct states with two warehouses and 288 with three. These are exactly <code>TwoPhase</code>'s counts for two and three RMs. In the fixed model, <code>stock[w]</code> always equals <code>Stock0 - Held(w)</code>, which is what <code>Conservation</code> says, so the extra variable adds no states. When adding a variable doesn't change the count, it is a function of the others, and it is worth asking whether you need to store it at all. The general lesson: an effect attached to a receive action must be idempotent, because the network may deliver the message to any RM, any number of times.</p>
+</details>
+</article>

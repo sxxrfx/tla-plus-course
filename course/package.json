@@ -1,0 +1,15 @@
+{
+  "name": "tla-plus-course",
+  "private": true,
+  "type": "module",
+  "description": "Build and test tools for the offline TLA+ course.",
+  "scripts": {
+    "build": "python3 build.py",
+    "test": "node e2e.mjs && node autotest.mjs",
+    "check:specs": "python3 ps_specs.py",
+    "install-browser": "playwright-core install chromium"
+  },
+  "devDependencies": {
+    "playwright-core": "1.64.1"
+  }
+}

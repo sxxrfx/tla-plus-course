@@ -1,0 +1,49 @@
+<h1>A step formula must describe the whole next state.</h1>
+<p class="lead">{{lesson:diehard}} left <code>Next</code> as six names. Writing their definitions exposes the most common beginner's mistake in TLA+, and it fixes what you need to say about every variable in every step.</p>
+<!--fig:frame-->
+<p>A formula like the six in <code>Next</code>, which relates a current state to a next state and describes one kind of step, is called an <strong>action</strong>. Start with <code>FillSmall</code>. Most people first write this:</p>
+<pre><code>FillSmall == small' = 3</code></pre>
+<details class="answer"><summary>Predict: why is that wrong? Decide before opening this. The diagram above is a clue.</summary><p>If you didn't see it, you are reading it as a command that sets <code>small</code> to 3. It is a formula, true for some steps and false for others. It is true for any step where <code>small</code> is 3 in the second state, whatever <code>big</code> does. In the diagram, that includes the two red arrows, where <code>big</code> becomes √7 or the string <code>"abc"</code>.</p></details>
+<h2>Frames: say what stays the same</h2>
+<p>The correct definition also says <code>big</code> doesn't change:</p>
+<pre><code>FillSmall == /\ small' = 3
+             /\ big'   = big
+
+FillBig == /\ big'   = 5
+           /\ small' = small</code></pre>
+<p>A line like <code>big' = big</code> is called a <strong>frame</strong> condition. Most engineers feel it shouldn't be needed. Lamport's answer is that “unchanged unless mentioned” would take you out of simple math and into the more complicated world of programming languages. In math, a formula that doesn't mention <code>big'</code> says nothing about it.</p>
+<p>TLC enforces this in practice. We removed the frame line and ran the spec:</p>
+<pre><code>Error: Successor state is not completely specified by action FillSmall
+of the next-state relation. The following variable is not defined: big.</code></pre>
+<p>Keep the two facts separate. Mathematically, omission permits any value. In TLC, omission usually produces this error. In neither case does it preserve the old value.</p>
+<details class="answer"><summary>Exercise: write <code>EmptySmall</code> and <code>EmptyBig</code>.</summary><p><code>EmptySmall == /\ small' = 0 /\ big' = big</code> and <code>EmptyBig == /\ big' = 0 /\ small' = small</code>, each written as a two-line bulleted list. Each one has a line for each variable.</p></details>
+<h2>Pouring has two cases</h2>
+<p>Now <code>SmallToBig</code>. There are two cases, and the behavior from {{lesson:diehard}} contains both.</p>
+<!--fig:pour-->
+<p>In the top row of the diagram, the big jug has room for all the water in the small one, so all of it moves and the small jug is empty. In the bottom row there isn't enough room, so the big jug ends up full and some water stays behind. Which case applies depends only on the total, so an IF formula fits:</p>
+<pre><code>SmallToBig == IF big + small =&lt; 5
+                THEN /\ big'   = big + small
+                     /\ small' = 0
+                ELSE ...</code></pre>
+<div class="callout"><p><strong>Stop and solve this.</strong> Write the ELSE part of <code>SmallToBig</code>, and then all of <code>BigToSmall</code>. Write them down. As in the lecture, you will check your answer with TLC after saving the heroes, so the full definitions wait until {{lesson:diehard-tlc}}. You can test your arithmetic against the lab in {{lesson:diehard}}.</p></div>
+<p>All the lines in a list describe the same pair of states, so nothing happens first. In <code>big' = big + small</code>, both unprimed values are from the current state. This is what lets one step swap two values:</p>
+<div class="quiz" data-answer="0" data-explain="The right-hand sides use the current state. Both next-state formulas describe the same step."><fieldset><legend>With x = 2 and y = 9, what next state does <code>x' = y /\ y' = x</code> allow?</legend><label><input type="radio" name="q-a-actions" value="0">x = 9, y = 2</label><label><input type="radio" name="q-a-actions" value="1">x = 9, y = 9</label><label><input type="radio" name="q-a-actions" value="2">Two separate steps</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="answer"><summary>Predict: does <code>x' = x + 1 /\ x' = x + 2</code> increment x twice?</summary><p>No. No integer equals both <code>x + 1</code> and <code>x + 2</code>, so no next state satisfies the formula and this action never happens. Conjunction combines conditions. It doesn't sequence assignments.</p></details>
+<h2>Guards, and why the jugs have none</h2>
+<p>You saw a <strong>guard</strong> in {{lesson:counter}}: a line with no primes, which an action needs to be true of the current state. <code>x &lt; Max</code> is one. An action is <strong>enabled</strong> in a state when some next state satisfies it, so a false guard disables the action.</p>
+<p>The jug actions have no guards. Every one of the six is enabled in every state, which is why the lab never greys out a button, and why TLC will never report deadlock for this spec. The <code>IF</code> in <code>SmallToBig</code> is not a guard, since it doesn't disable anything. It chooses between two descriptions of the next state, and both are possible to satisfy.</p>
+<!--fig:matrix-->
+<p>The matrix is a mechanical check for the frame of every action: one row per action, one column per variable, no blanks. A blank cell is a question you haven't answered. A later lecture introduces <code>UNCHANGED</code>, a shorthand for frame lines, once specs have more variables. For now, write each one out.</p>
+<h2>Worked action: sending a chat message</h2>
+<p>A chat composer stores a draft, a count of pending messages, the last text sent, and the selected conversation. Sending should record the draft, clear it, and leave the selected conversation alone. <code>/=</code> means “not equal.”</p>
+<pre><code>Send == /\ draft /= ""
+        /\ pending' = pending + 1
+        /\ lastSent' = draft
+        /\ draft' = ""
+        /\ selected' = selected</code></pre>
+<!--fig:chat-->
+<p>The first line is a guard that rejects an empty draft. <code>lastSent' = draft</code> uses the old draft, even though the same action clears it, as the diagram shows. If you instead cleared the draft in one action and recorded it in a later one, the later action would see an empty draft unless you saved a copy. That model needs an extra variable. Where you draw the boundary of an action says whether capture and clearing are one indivisible operation or two visible steps.</p>
+<details class="answer"><summary>Predict: <code>Send</code> specifies <code>draft'</code> but says nothing about <code>pending'</code>. Is <code>pending</code> preserved?</summary><p>No. Nothing constrains its next value, and TLC would report that the successor state isn't completely specified, just as it did for <code>FillSmall</code>. Add the increment you want or an explicit <code>pending' = pending</code>.</p></details>
+<h2>While you watch</h2>
+<p>This lesson covers Lecture 4 from the definition of <code>FillSmall</code> through “Pouring between jugs.”</p>
+<ul><li>Look for: the three example steps that the wrong <code>FillSmall</code> allows. They are the three arrows in the first diagram.</li><li>Pause where the lecture says to figure out why the definition is wrong, and again where it asks you to finish the pours. Really do the second one on paper.</li><li>This lesson adds the frame matrix, guards, the swap, and the chat example. The lecture's own spec has no guards; you will see them in the transaction commit lecture too.</li></ul>

@@ -1,0 +1,10 @@
+import sys,os; sys.path.insert(0,os.path.join(os.path.dirname(__file__),".."))
+from dg import graph,sequence,lanes,regions
+tree=graph({"or":(80,146,"\\/ either\ncase","accent"),"a1":(290,70,"/\\ all three","good"),"a2":(290,222,"/\\ all three","good"),"x1":(540,26,"pc = \"start\""),"x2":(540,70,"i' \\in 0..1000"),"x3":(540,114,"pc' = \"middle\""),"y1":(540,178,"pc = \"middle\""),"y2":(540,222,"i' = i + 1"),"y3":(540,266,"pc' = \"done\"")},[("or","a1"),("or","a2"),("a1","x1"),("a1","x2",""),("a1","x3"),("a2","y1"),("a2","y2",""),("a2","y3")],"The bulleted next-state formula as a tree read left to right: an or with two children, each an and of three formulas.",width=660,height=300,mono=True)
+pn={"s":(80,110,"i: 0\npc: start","accent"),"m":(320,50,"i: 42\npc: middle"),"m2":(320,170,"i: 43\npc: middle"),"d":(560,50,"i: 43\npc: done"),"d2":(560,170,"i: 44\npc: done")}
+pick=graph(pn,[("s","m","Pick",{"ly":-12}),("s","m2","Pick",{"ly":12}),("m","d","Add1",{"ly":-14}),("m2","d2","Add1",{"ly":-14})],"The state graph with each arrow labeled by the definition that allows it: Pick from start to middle, Add1 from middle to done.",width=660,height=220,mono=True)
+cn={"a":(90,36,"items > 0: TRUE","good"),"b":(90,96,"termsAccepted: TRUE","good"),"c":(90,186,"inStock: FALSE","bad"),"e":(330,66,"Eligible: TRUE","good"),"k":(560,126,"CanCheckout: FALSE","bad")}
+cart=graph(cn,[("a","e"),("b","e"),("e","k"),("c","k")],"A conjunction tree for a cart: items and terms make Eligible true; Eligible and inStock false make CanCheckout false.",width=700,height=222)
+FIGS={"tree":(tree,"Indentation is the structure. Read it left to right. Each bullet column is one node of this tree: the outer <code>\\/</code> column picks a case, and each inner <code>/\\</code> column requires all three of its formulas."),
+"pick":(pick,"Names for pieces of the formula are also names for kinds of step. Every arrow out of the start state is a Pick step, and every arrow into done is an Add1 step."),
+"cart":(cart,"A conjunction fails as soon as any required formula fails. Eligible is true, yet CanCheckout is false.")}

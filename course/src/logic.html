@@ -1,0 +1,67 @@
+<h1>List the cases instead of nesting them.</h1>
+<p class="lead">The IF formula from {{lesson:program}} works, but it won't scale. Using “or” and “and” as bulleted lists turns the same formula into a tree you can read at a glance, and that form is how nearly every spec in this course is written.</p>
+<!--fig:tree-->
+<h2>From IF to “or”</h2>
+<p>Call the two THEN formulas <code>A</code> and <code>B</code>. The IF formula is true in exactly two cases: <code>pc = "start"</code> and <code>A</code> are both true, or <code>pc = "middle"</code> and <code>B</code> are both true. So the same formula can be written with “or,” which is <code>||</code> in some programming languages, ∨ in math, and <code>\/</code> in ASCII. The final <code>FALSE</code> is no longer needed, because when <code>pc</code> is <code>"done"</code> neither case holds.</p>
+<pre><code>((pc = "start")  /\ A)
+\/ ((pc = "middle") /\ B)</code></pre>
+<p>Now put <code>A</code> and <code>B</code> back, drop the parentheses that no longer help, and use the form TLA+ provides for lists. An extra <code>/\</code> in front of the first item turns the items into a <strong>bulleted list</strong>, with a line per item. The list ends at the first token to the left of its bullets, so no closing parenthesis is needed. <code>\/</code> works the same way:</p>
+<pre><code>Next == \/ /\ pc = "start"
+           /\ i' \in 0..1000
+           /\ pc' = "middle"
+        \/ /\ pc = "middle"
+           /\ i' = i + 1
+           /\ pc' = "done"</code></pre>
+<p>This is what the tree at the top of the lesson shows. The outer <code>\/</code> column is the root, with one branch for each case. Each <code>/\</code> column is a node that requires all its lines. Indentation carries the structure, and widely separated matching parentheses are gone.</p>
+<h2>The vocabulary so far</h2>
+<div class="table-wrap"><table><thead><tr><th>ASCII</th><th>Read it as</th><th>True when</th></tr></thead><tbody><tr><td><code>P /\ Q</code></td><td>P and Q</td><td>Both are true. Such a formula is a <strong>conjunction</strong>.</td></tr><tr><td><code>P \/ Q</code></td><td>P or Q</td><td>At least one is true, possibly both.</td></tr><tr><td><code>~P</code></td><td>not P</td><td>P is false.</td></tr><tr><td><code>P =&gt; Q</code></td><td>P implies Q</td><td>P is false, or Q is true.</td></tr><tr><td><code>v'</code></td><td>next value of v</td><td>Not a truth value: it lets a formula talk about the next state.</td></tr><tr><td><code>=</code></td><td>equals</td><td>The two sides have the same value.</td></tr><tr><td><code>==</code></td><td>is defined to be</td><td>Gives a name to a formula.</td></tr></tbody></table></div>
+<p>The lecture needs only <code>/\</code> and <code>\/</code>. <code>~</code> and <code>=&gt;</code> complete the set you need before {{lesson:sets}}, which adds quantifiers.</p>
+<h2>It is still a formula</h2>
+<p>The formula may look like commands, but it isn't. The order of lines carries no meaning, because <code>\/</code> and <code>/\</code> are <strong>commutative</strong>, meaning order makes no difference: swapping the two cases, or moving <code>pc' = "middle"</code> to the top of its list, yields an equivalent formula. The <code>=</code> means equality as in 2 + 2 = 4, while C's <code>=</code> means assignment, which isn't so simple.</p>
+<p>The C code may look simpler because it is familiar, but compare the two on what <code>someNumber()</code> stands for. In the formula, nondeterminism takes a single line: <code>i' \in 0..1000</code>. Common programming languages were not designed to express this. We need it because we can't predict the order in which things happen in a real system, and in the math it is easy.</p>
+<h2>The complete spec</h2>
+<p>A spec lives in a <strong>module</strong>. The module name matches the file name. <code>EXTENDS Integers</code> imports arithmetic operators such as <code>+</code> and <code>..</code>. <code>VARIABLES</code> declares the variables. Identifiers must be defined or declared before they are used. <code>Init</code> and <code>Next</code> are only conventional names, but use them.</p>
+<pre><code>--------------- MODULE SimpleProgram ---------------
+EXTENDS Integers
+VARIABLES i, pc
+
+Init == (pc = "start") /\ (i = 0)
+
+Next == \/ /\ pc = "start"
+           /\ i' \in 0..1000
+           /\ pc' = "middle"
+        \/ /\ pc = "middle"
+           /\ i' = i + 1
+           /\ pc' = "done"
+====================================================</code></pre>
+<p>You will run this module yourself in {{lesson:counter}}.</p>
+<h2>Decomposing with definitions</h2>
+<p>A real next-state formula can run to hundreds or thousands of lines. Math has a simple way to split it up: definitions. This spec doesn't need splitting, but you can see the method by naming the two cases. You could call them Fred and Mary, but descriptive names are better:</p>
+<pre><code>Pick == /\ pc = "start"
+        /\ i' \in 0..1000
+        /\ pc' = "middle"
+
+Add1 == /\ pc = "middle"
+        /\ i' = i + 1
+        /\ pc' = "done"
+
+Next == Pick \/ Add1</code></pre>
+<!--fig:pick-->
+<p>This <code>Next</code> is completely equivalent to the earlier one. We checked with TLC, and all three versions, the IF form, the bulleted form, and this one, produce the same 2003 states. The diagram shows why the names help: they name kinds of step, so you can label every arrow in the state graph.</p>
+<h2>Worked rules for a shopping cart</h2>
+<p>A cart can be submitted only when it contains items, the customer has accepted the terms, and the goods are in stock. Define the rule before attaching any step to it, to separate “may this happen?” from “what changes if it does?” Here, <code>items</code>, <code>termsAccepted</code>, and <code>inStock</code> are variables.</p>
+<pre><code>Eligible == /\ items &gt; 0
+            /\ termsAccepted
+
+CanCheckout == /\ Eligible
+               /\ inStock</code></pre>
+<!--fig:cart-->
+<p>In the diagram, the cart has items and the terms are accepted, so <code>Eligible</code> is true. But <code>inStock</code> is false, so <code>CanCheckout</code> is false.</p>
+<h2>The implication trap</h2>
+<p><code>P =&gt; Q</code> is true whenever P is false. Take the module this cart comes from, where <code>ordered</code> records that checkout happened, and the claim <code>ordered =&gt; termsAccepted</code>. It holds in the checked model, but note what that claim would do in a model where checkout never happens: it would hold there too, since <code>ordered</code> is always false. A check that passes because its left side never occurs is called <strong>vacuous</strong>. An implication doesn't make Q happen, and it doesn't show that P ever happens.</p>
+<details class="answer"><summary>Predict: with <code>items = 2</code>, <code>termsAccepted = FALSE</code>, <code>inStock = TRUE</code>, what are <code>Eligible</code> and <code>CanCheckout</code>?</summary><p>Both false. <code>Eligible</code> fails on the terms, and <code>CanCheckout</code> includes <code>Eligible</code>. Being in stock can't make up for a missing requirement in a conjunction.</p></details>
+<div class="quiz" data-answer="0" data-explain="Both operators are commutative, so reordering the lists gives an equivalent formula. The lines aren't run in order."><fieldset><legend>You swap the two <code>\/</code> cases of <code>Next</code> and reorder the lines in each <code>/\</code> list. What changes?</legend><label><input type="radio" name="q-a-logic" value="0">Nothing: the formula is equivalent</label><label><input type="radio" name="q-a-logic" value="1">The program now runs the second case first</label><label><input type="radio" name="q-a-logic" value="2"><code>i'</code> gets its value later</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>While you watch</h2>
+<p>This lesson covers Lecture 2 from “A nicer way to write the next-state formula” to the end. {{lesson:program}} covers the earlier part.</p>
+<ul><li>Look for: the slide where the extra <code>/\</code> appears and the parentheses vanish, and the rule for where a bulleted list ends.</li><li>Pause when the lecture compares the formula with the C code. Decide for yourself what each one says about <code>someNumber()</code>.</li><li>Lamport says he prefers simple examples studied carefully over complex ones skimmed. Before moving on, rewrite <code>Next</code> from memory.</li><li>This lesson adds the tree view, <code>~</code> and <code>=&gt;</code>, and the cart. Quantifiers come in {{lesson:sets}}.</li></ul>
+<p class="resources">Reference: <a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/tla/book.html">Specifying Systems</a>, chapter 1.</p>

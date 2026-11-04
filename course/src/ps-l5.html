@@ -1,0 +1,304 @@
+<h1>Problem set 5: say it about every process at once.</h1>
+<p class="lead">Lecture 5 gave you sets, functions and quantifiers, and the TCommit spec, which uses them to describe any number of participants. These problems use that notation on replicas, pods, services and servers. They still rely on guards, frames and the never-reached claim from {{ref:ps-l4}}, and on TLC's reports from {{lesson:counter}}.</p>
+<p><code>UNCHANGED</code> and records come with Lecture 6, so frames are still written out as <code>v' = v</code>. A function-valued variable that a step changes with <code>EXCEPT</code> needs no other frame. For trace lengths, run TLC with <code>-workers 1</code>.</p>
+
+<article class="problem" id="ps-l5-failover">
+<p class="problem-meta"><span>Problem 1</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">Databases</span></p>
+<h2>A failover tool reads the replica map</h2>
+<p class="uses">Draws on {{ref:sets}}, {{ref:tcommit}} and {{ref:counter}}.</p>
+<p>A Postgres primary streams its write-ahead log to three replicas. A failover tool keeps two functions with the same domain: <code>status</code>, modeled loosely on the <code>state</code> column of Postgres's <code>pg_stat_replication</code> view, and <code>lag</code>, each replica's last reported replay lag in seconds. When the primary dies, the tool promotes a <em>candidate</em>: a streaming replica with the smallest lag.</p>
+<!--fig:failover-->
+<p>Evaluate these by hand, before using TLC. Each is <code>TRUE</code> or <code>FALSE</code>.</p>
+<pre><code>E1 == \A r \in Replicas : status[r] = "streaming" =&gt; lag[r] =&lt; 5
+E2 == \E r \in Replicas : \A s \in Replicas : lag[r] =&lt; lag[s]
+E3 == \A s \in Replicas : \E r \in Replicas : lag[r] &lt; lag[s]
+E4 == \A r \in Replicas : lag[r] =&lt; 5
+E5 == \A r \in {} : lag[r] &gt; 100</code></pre>
+<p>Then look at the tool's rule, as the module below writes it. <code>Next</code> is one event: db1 crashes.</p>
+<pre><code>----------------------------- MODULE PSl5_Failover -----------------------------
+EXTENDS Integers
+
+Replicas == {"db1", "db2", "db3"}
+
+\* Replay lag in seconds, as last reported.
+lag == [r \in Replicas |-&gt; IF r = "db1" THEN 0
+                           ELSE IF r = "db2" THEN 4
+                           ELSE 90]
+
+VARIABLE status
+
+Init == status = [r \in Replicas |-&gt; IF r = "db3" THEN "catchup"
+                                     ELSE "streaming"]
+
+\* db1 crashes. Its last reported lag stays in the table.
+Next == status' = [status EXCEPT !["db1"] = "down"]
+
+Candidate(r) == /\ status[r] = "streaming"
+                /\ \A s \in Replicas : lag[r] =&lt; lag[s]
+
+SomeCandidate == \E r \in Replicas : Candidate(r)
+=============================================================================</code></pre>
+<p>The config is <code>INIT Init</code>, <code>NEXT Next</code>, <code>INVARIANT SomeCandidate</code>.</p>
+<ol class="tasks" type="a">
+<li>Give the values of E1 to E5, with a one-line reason each.</li>
+<li>How many elements does <code>[Replicas -&gt; {"streaming", "catchup", "down"}]</code> have? Write a type invariant for <code>status</code> using it.</li>
+<li>Which replicas satisfy <code>Candidate</code> in the initial state? Run TLC. What does it report, and why?</li>
+<li>Fix <code>Candidate</code> so that only streaming replicas are compared, and check it again.</li>
+</ol>
+<div class="quiz" data-answer="1" data-explain="E2 says one replica (db1) has lag no larger than anybody's. E3 says every replica has someone with strictly smaller lag, which fails for db1: nobody's lag is below 0. Swapping the order of \E and \A changed the meaning."><fieldset><legend>Which of E2 and E3 is true?</legend><label><input type="radio" name="q-ps-l5-failover" value="0">Both</label><label><input type="radio" name="q-ps-l5-failover" value="1">Only E2</label><label><input type="radio" name="q-ps-l5-failover" value="2">Only E3</label><label><input type="radio" name="q-ps-l5-failover" value="3">Neither</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="27|twenty-seven|twentyseven" data-explain="Each of the 3 replicas independently gets one of 3 values: 3 × 3 × 3 = 27 functions." data-retry="A function picks one value for each element of its domain, independently."><label>Number of elements of <code>[Replicas -&gt; {"streaming", "catchup", "down"}]</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="0|zero|none" data-explain="db1 is down, so it isn't a candidate. db2 is streaming, but lag[\"db2\"] =< lag[\"db1\"] is 4 =< 0, which is false, so it fails the \A. db3 isn't streaming." data-retry="The \A in Candidate ranges over all replicas, including db1."><label>After db1 goes down, how many replicas satisfy <code>Candidate</code>? <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Over a finite set, <code>\A</code> is a long “and” and <code>\E</code> a long “or”. Write them out for db1, db2 and db3. For the bug, ask which replicas the <code>\A s</code> in <code>Candidate</code> compares against after the crash.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong> E1 is <code>TRUE</code>: the streaming replicas are db1 and db2, with lags 0 and 4. For db3 the left side of <code>=&gt;</code> is false, so its case is true. E2 is <code>TRUE</code>: take r = db1. E3 is <code>FALSE</code>: for s = db1, no lag is below 0. E4 is <code>FALSE</code> because of db3's 90. Compare it with E1, where the implication excused db3. E5 is <code>TRUE</code>, like every <code>\A</code> over the empty set.</p>
+<p><strong>(b)</strong> 27, since each replica independently gets one of three values. The type invariant is <code>status \in [Replicas -&gt; {"streaming", "catchup", "down"}]</code>.</p>
+<p><strong>(c)</strong> Initially only db1 is a candidate: it is streaming and its lag of 0 is no larger than anybody's. TLC reports <code>Invariant SomeCandidate is violated</code> in a 2-state trace:</p>
+<pre><code>State 1: &lt;Initial predicate&gt;
+status = [db1 |-&gt; "streaming", db2 |-&gt; "streaming", db3 |-&gt; "catchup"]
+
+State 2: &lt;Next ...&gt;
+status = [db1 |-&gt; "down", db2 |-&gt; "streaming", db3 |-&gt; "catchup"]</code></pre>
+<p>TLC prints a function whose domain is a set of strings in this bracket form, the notation for records, which Lecture 6 introduces. After the crash, db2 is the obvious choice, but <code>Candidate("db2")</code> still compares its lag with db1's last reported 0 and fails. The dead replica's old number blocks every live one. A failover tool with this rule would refuse to promote anything in exactly the situation it exists for.</p>
+<p><strong>(d)</strong> Restrict the comparison to streaming replicas:</p>
+<pre><code>Candidate(r) == /\ status[r] = "streaming"
+                /\ \A s \in Replicas : status[s] = "streaming" =&gt; lag[r] =&lt; lag[s]</code></pre>
+<p>With this definition (module <code>PSl5_FailoverFixed</code>), TLC reports no error in 2 distinct states: db1 is the candidate before the crash and db2 after it. The fix uses the same pattern as E1, an implication inside <code>\A</code> that excuses the elements you don't care about. (The fixed rule still has a gap: if no replica is streaming, there is no candidate, and maybe that's what you want.)</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l5-rollout">
+<p class="problem-meta"><span>Problem 2</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Infrastructure</span></p>
+<h2>A rolling update that takes down two pods</h2>
+<p class="uses">Draws on {{ref:sets}}, {{ref:tcommit}} and {{ref:diehard-tlc}}.</p>
+<p>A Kubernetes Deployment can replace pods one at a time: with <code>maxSurge: 0</code> and <code>maxUnavailable: 1</code>, its rolling update keeps at most one replica unavailable, and a new pod counts as available only once it passes its readiness probe. Your team runs a stateful service whose pods need a custom drain step, so it wrote its own rollout script with the same goal: with three replicas, at least two serve traffic at every moment. Each pod goes from v1 to stopping, to starting, to v2, and serves only in v1 and v2. The script's rule for stopping a pod is “only if no other pod is stopping”.</p>
+<pre><code>------------------------------ MODULE PSl5_Rollout ------------------------------
+CONSTANT Pod             \* the Deployment's replicas
+VARIABLE pod             \* pod[p] is the state of replica p
+
+TypeOK == pod \in [Pod -&gt; {"v1", "stopping", "starting", "v2"}]
+
+Init == pod = [p \in Pod |-&gt; "v1"]
+
+Serving(p) == pod[p] \in {"v1", "v2"}
+
+\* The controller replaces one old pod. The guard is its availability rule.
+Stop(p) == /\ pod[p] = "v1"
+           /\ \A q \in Pod : pod[q] /= "stopping"
+           /\ pod' = [pod EXCEPT ![p] = "stopping"]
+
+\* The old container has exited; the new one is scheduled.
+Start(p) == /\ pod[p] = "stopping"
+            /\ pod' = [pod EXCEPT ![p] = "starting"]
+
+\* The new container passes its readiness probe.
+Ready(p) == /\ pod[p] = "starting"
+            /\ pod' = [pod EXCEPT ![p] = "v2"]
+
+Next == \E p \in Pod : Stop(p) \/ Start(p) \/ Ready(p)
+=============================================================================</code></pre>
+<ol class="tasks" type="a">
+<li>Add the invariant <code>AtMostOneDown</code>: at most one pod is out of service. You don't have a way to count elements of a set yet, so say it with quantifiers.</li>
+<li>Run TLC with <code>CONSTANT Pod = {"p1", "p2", "p3"}</code>, <code>INVARIANT TypeOK</code>, <code>INVARIANT AtMostOneDown</code> and <code>CHECK_DEADLOCK FALSE</code>. Explain the trace. Why is the deadlock check off?</li>
+<li>Fix the guard of <code>Stop</code>. How many distinct states does TLC find now, and why that number?</li>
+<li>Use the trick from {{lesson:diehard-tlc}} to make TLC show you a complete rollout. How many steps does it take?</li>
+</ol>
+<div class="quiz" data-answer="1" data-explain="Option 1 says any two pods that are both down are the same pod: at most one is down. Option 3 looks like it needs two pods, but p and q may be the same pod, so it only says some pod serves."><fieldset><legend>Which formula says “at least two of the three pods serve”?</legend><label><input type="radio" name="q-ps-l5-rollout" value="0"><code>\E p \in Pod : Serving(p)</code></label><label><input type="radio" name="q-ps-l5-rollout" value="1"><code>\A p, q \in Pod : (~Serving(p) /\ ~Serving(q)) =&gt; p = q</code></label><label><input type="radio" name="q-ps-l5-rollout" value="2"><code>\A p \in Pod : Serving(p)</code></label><label><input type="radio" name="q-ps-l5-rollout" value="3"><code>\E p, q \in Pod : Serving(p) /\ Serving(q)</code></label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="4|four" data-explain="Init, Stop(p1), Start(p1), Stop(p2). p1 is starting, not stopping, so the guard lets p2 stop." data-retry="Run with -workers 1 and count the initial state."><label>States in TLC's trace for the script as written <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="32|thirty-two|thirtytwo" data-explain="With all pods serving, each is v1 or v2: 2 × 2 × 2 = 8 states. With one pod out (3 choices, stopping or starting: 2 choices), the other two are v1 or v2: 3 × 2 × 4 = 24. 8 + 24 = 32." data-retry="Count states where every pod serves, then states where exactly one doesn't."><label>Distinct states after the fix <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>“At most one” means: if two pods are both down, they are the same pod. For the fix, ask what the rule should look at: whether a pod is stopping, or whether it is serving.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong> If two pods are both out of service, they are the same pod:</p>
+<pre><code>AtMostOneDown == \A p, q \in Pod : (~Serving(p) /\ ~Serving(q)) =&gt; p = q</code></pre>
+<p><strong>(b)</strong> TLC reports <code>Invariant AtMostOneDown is violated</code>:</p>
+<!--fig:rollout-->
+<p>p1 is stopped and its replacement is starting. That pod is not stopping, so the script's guard <code>\A q \in Pod : pod[q] /= "stopping"</code> is true and p2 stops too. For as long as p1's new container takes to pass its probe, only p3 serves. The rule checked the wrong state: “stopping” is one way of being out of service, not the only one. The deadlock check is off because a finished rollout, with every pod on v2, has no next step, and that stop is intended.</p>
+<p><strong>(c)</strong> Make the guard the property you want: stop a pod only if every pod is serving.</p>
+<pre><code>Stop(p) == /\ pod[p] = "v1"
+           /\ \A q \in Pod : Serving(q)
+           /\ pod' = [pod EXCEPT ![p] = "stopping"]</code></pre>
+<p>TLC finds no error and 32 distinct states: the 8 where every pod is v1 or v2, plus the 24 where exactly one pod is stopping or starting. Counting reachable states by hand and matching TLC's number is a good check that the model allows what you think it allows, as {{lesson:tcommit}} advised.</p>
+<p><strong>(d)</strong> Claim <code>NotRolledOut == ~(\A p \in Pod : pod[p] = "v2")</code> as an invariant. TLC reports it violated with a 10-state trace: Stop, Start and Ready for p1, then the same for p2, then p3. That is 9 steps, 3 per pod, done strictly one pod at a time, which is what the rule promised. Kubernetes' <code>maxSurge</code> exists to speed this up by starting new pods before old ones stop. Modeling it would need a variable number of pods.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l5-schema">
+<p class="problem-meta"><span>Problem 3</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Microservices</span></p>
+<h2>All services move to schema v2, or none do</h2>
+<p class="uses">Draws on {{ref:tcommit}}, {{ref:sets}} and {{ref:diehard-tlc}}.</p>
+<p>Three services, orders, billing and shipping, publish and consume <code>OrderPlaced</code> events on a shared topic. Version 2 of the event schema renames a field. A service on v1 code can't parse a v2 event, so the platform team sets two rules. First, nobody may emit v2 until every service has deployed a reader that understands both versions. Second, any team may back out, and if one does, nobody ever emits v2.</p>
+<p>So each service goes through four states: <code>"v1"</code>, <code>"ready"</code> (reads both, still emits v1), <code>"v2"</code> (emits v2), and <code>"pinned"</code> (backed out: stays on v1 for good). This should look familiar.</p>
+<ol class="tasks" type="a">
+<li>Write the module, with <code>CONSTANT Svc</code> and one variable <code>st</code>, a function from services to states. Write the actions <code>GetReady(s)</code>, <code>Switch(s)</code> and <code>Cancel(s)</code>, and two invariants: <code>Agreement</code> (no service on v2 while another is pinned) and <code>ReadersReady</code> (if any service is on v2, every service is ready or on v2).</li>
+<li>Run TLC with the three services as strings. How many distinct states does it find? Why is that number familiar?</li>
+<li>A teammate argues that the switch guard is too strict, since a service only needs “nobody has backed out”. Replace the guard of <code>Switch(s)</code> by <code>\A t \in Svc : st[t] # "pinned"</code> and run again.</li>
+</ol>
+<div class="numcheck" data-answer="34|thirty-four|thirtyfour" data-explain="It's TCommit with the states renamed: v1, ready, v2, pinned play working, prepared, committed, aborted, and the guards are canCommit and notCommitted. TCommit with three RMs has 34 distinct states." data-retry="Run with CONSTANT Svc = {&quot;orders&quot;, &quot;billing&quot;, &quot;shipping&quot;} and CHECK_DEADLOCK FALSE."><label>Distinct states with three services <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="TLC reports ReadersReady violated after orders gets ready and switches while billing and shipping are on v1. Agreement still holds: Cancel requires that nobody is on v2, so once orders switches nobody can be pinned. TLC confirms it with Agreement as the only invariant: no error."><fieldset><legend>With the teammate's guard, which invariant does TLC report violated?</legend><label><input type="radio" name="q-ps-l5-schema" value="0"><code>Agreement</code></label><label><input type="radio" name="q-ps-l5-schema" value="1"><code>ReadersReady</code>, and <code>Agreement</code> still holds</label><label><input type="radio" name="q-ps-l5-schema" value="2">Both</label><label><input type="radio" name="q-ps-l5-schema" value="3">Neither</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Match each state to one of TCommit's. Which TCommit formula says “everyone is ready”, and which one says “nobody has gone ahead”?</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<!--fig:schema-->
+<p><strong>(a)</strong> In the diagram, each state carries its TCommit name. The module:</p>
+<pre><code>---------------------------- MODULE PSl5_Schema ----------------------------
+CONSTANT Svc             \* services that produce and consume OrderPlaced events
+VARIABLE st              \* st[s] is where service s is in the upgrade
+
+TypeOK == st \in [Svc -&gt; {"v1", "ready", "v2", "pinned"}]
+
+Init == st = [s \in Svc |-&gt; "v1"]
+
+canSwitch == \A s \in Svc : st[s] \in {"ready", "v2"}
+
+noneSwitched == \A s \in Svc : st[s] # "v2"
+
+\* Deploy code that can read both v1 and v2 events; still emit v1.
+GetReady(s) == /\ st[s] = "v1"
+               /\ st' = [st EXCEPT ![s] = "ready"]
+
+\* Start emitting v2 events.
+Switch(s) == /\ st[s] = "ready"
+             /\ canSwitch
+             /\ st' = [st EXCEPT ![s] = "v2"]
+
+\* Give up on v2 and stay on v1 for good.
+Cancel(s) == /\ st[s] \in {"v1", "ready"}
+             /\ noneSwitched
+             /\ st' = [st EXCEPT ![s] = "pinned"]
+
+Next == \E s \in Svc : GetReady(s) \/ Switch(s) \/ Cancel(s)
+
+Agreement == \A s, t \in Svc : ~ /\ st[s] = "v2"
+                                 /\ st[t] = "pinned"
+
+ReadersReady == (\E s \in Svc : st[s] = "v2")
+                  =&gt; \A t \in Svc : st[t] \in {"ready", "v2"}
+=============================================================================</code></pre>
+<p><strong>(b)</strong> With <code>CONSTANT Svc = {"orders", "billing", "shipping"}</code>, the two invariants and <code>CHECK_DEADLOCK FALSE</code>, TLC finds no error and 34 distinct states. That is TCommit's count for three RMs, and not by coincidence. Rename v1, ready, v2 and pinned to working, prepared, committed and aborted, and this module is TCommit with <code>Decide</code> split into its two branches. A schema rollout and a database commit are the same problem: a group must reach one decision, anyone may veto before it is made, and nobody may act on it early.</p>
+<p><strong>(c)</strong> With the weaker guard (module <code>PSl5_SchemaEager</code>), TLC reports <code>Invariant ReadersReady is violated</code> after 3 states: orders gets ready, then switches while billing and shipping are still on v1. Their consumers would choke on the first v2 event. <code>Agreement</code> alone doesn't catch this. Run with only <code>Agreement</code> and TLC finds no error, in 46 distinct states. Once orders is on v2, nobody can cancel, so the services do end up agreeing, after an outage.</p>
+<p>This is why TCommit's commit branch requires <code>canCommit</code>. For a database it means that no RM commits until every RM has promised it can. Here it means that nobody emits v2 before everyone can read it. The consistency invariant <code>TCConsistent</code> doesn't state that requirement, which is why you want <code>ReadersReady</code> written down and checked too.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l5-cron">
+<p class="problem-meta"><span>Problem 4 · Synthesis</span><span class="level" title="Difficulty 3 of 3">●●●</span><span class="domain">Databases</span></p>
+<h2>Distributed cron: every job at most once</h2>
+<p class="uses">Draws on {{ref:sets}}, {{ref:tcommit}}, {{ref:counter}}, and the migration problem in {{ref:ps-l4}}.</p>
+<p>Two application servers run the same crontab, so that the nightly jobs still run if one server is down. There are two jobs: <code>backup</code>, and <code>report</code>, which reads the backup. Neither may run twice in a night. Each server, for each job, reads the job's row in a shared <code>jobs</code> table. If <code>owner</code> is empty, it writes its own name and runs the job; otherwise it skips. A report must wait until some server has run the backup.</p>
+<details class="answer"><summary>The module (open to copy)</summary>
+<pre><code>------------------------------ MODULE PSl5_Cron ------------------------------
+CONSTANT Node                   \* servers that each run the same crontab
+VARIABLES pc,                   \* pc[n][j]: where node n is with job j tonight
+          owner                 \* owner[j]: the node in the jobs table, or "none"
+
+Jobs == {"backup", "report"}
+
+TypeOK == /\ pc \in [Node -&gt; [Jobs -&gt; {"idle", "seen", "ran", "skipped"}]]
+          /\ \A j \in Jobs : owner[j] = "none" \/ owner[j] \in Node
+
+Init == /\ pc = [n \in Node |-&gt; [j \in Jobs |-&gt; "idle"]]
+        /\ owner = [j \in Jobs |-&gt; "none"]
+
+\* pc with node n's entry for job j set to v
+Set(n, j, v) == [pc EXCEPT ![n] = [pc[n] EXCEPT ![j] = v]]
+
+\* The report reads the backup, so it may start only after a backup ran.
+Ready(j) == j = "report" =&gt; \E n \in Node : pc[n]["backup"] = "ran"
+
+\* SELECT owner FROM jobs WHERE name = j  -- and see "none"
+Check(n, j) == /\ pc[n][j] = "idle"
+               /\ owner[j] = "none"
+               /\ Ready(j)
+               /\ pc' = Set(n, j, "seen")
+               /\ owner' = owner
+
+\* UPDATE jobs SET owner = n WHERE name = j; then run the job
+Run(n, j) == /\ pc[n][j] = "seen"
+             /\ owner' = [owner EXCEPT ![j] = n]
+             /\ pc' = Set(n, j, "ran")
+
+\* Someone else has it.
+Skip(n, j) == /\ pc[n][j] = "idle"
+              /\ owner[j] # "none"
+              /\ pc' = Set(n, j, "skipped")
+              /\ owner' = owner
+
+Next == \E n \in Node : \E j \in Jobs : Check(n, j) \/ Run(n, j) \/ Skip(n, j)
+
+AtMostOnce == \A j \in Jobs : \A n, m \in Node :
+                (pc[n][j] = "ran" /\ pc[m][j] = "ran") =&gt; n = m
+=============================================================================</code></pre>
+<p>The config:</p>
+<pre><code>INIT Init
+NEXT Next
+CONSTANT Node = {"n1", "n2"}
+INVARIANT TypeOK
+INVARIANT AtMostOnce
+CHECK_DEADLOCK FALSE</code></pre></details>
+<p><code>pc</code> is a function whose values are functions: <code>pc[n]</code> is node n's function from jobs to states, and <code>pc[n][j]</code> is one entry. <code>Set(n, j, v)</code> builds the new <code>pc</code> by applying <code>EXCEPT</code> at both levels.</p>
+<ol class="tasks" type="a">
+<li>Read <code>AtMostOnce</code> aloud. Why does it end in <code>n = m</code> rather than <code>n # m</code>?</li>
+<li>Run TLC. Explain the trace in terms of SQL statements.</li>
+<li>Replace <code>Check</code> and <code>Run</code> by a single action <code>Claim(n, j)</code> that models one conditional <code>UPDATE jobs SET owner = n WHERE name = j AND owner IS NULL</code>: it succeeds and runs the job only if <code>owner</code> is still empty. Check <code>AtMostOnce</code>.</li>
+<li>The <code>Ready</code> guard plays the role the runbook guards played in the migration problem of {{ref:ps-l4}}. Use the same never-reached claim to make TLC produce a night's schedule in which both jobs run.</li>
+<li>Run your fixed module with the deadlock check on. Is the stop TLC reports a deadlock or termination? Add an action that tells TLC which stops are intended, so that the check can stay on.</li>
+</ol>
+<div class="numcheck" data-answer="5|five" data-explain="Check(n1, backup), Check(n2, backup), Run(n1, backup), Run(n2, backup): both nodes saw an empty owner before either wrote, and both ran the backup." data-retry="Use -workers 1, and count the initial state."><label>States in TLC's trace for the module as given <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="2" data-explain="In the final state every pc entry is ran or skipped, so nothing is left to do: the night's work is finished. TLC can't know that stopping is intended, as in the counter lesson. A Finished action that is enabled only in such states and changes nothing lets TLC tell the two apart."><fieldset><legend>With the deadlock check on, TLC reports “Deadlock reached” for the fixed module. What is it?</legend><label><input type="radio" name="q-ps-l5-cron" value="0">A real deadlock: the report waits forever for the backup</label><label><input type="radio" name="q-ps-l5-cron" value="1">A bug in <code>Claim</code></label><label><input type="radio" name="q-ps-l5-cron" value="2">Termination: every node has run or skipped every job</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>For (c), the check and the write must be one step, so the guard <code>owner[j] = "none"</code> and the change <code>owner' = [owner EXCEPT ![j] = n]</code> belong to the same action. For (e), an action whose guard says “everyone is finished” and whose frame keeps every variable the same is enabled exactly in the intended final states.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong> “For every job, for any two nodes: if both ran it, they are the same node.” With <code>n # m</code> it would say that both ran it only if they are different nodes, and the case n = m would make it false in any state where some node ran the job. The <code>\A n, m</code> includes the pairs where n and m are equal. That is what makes “at most one” come out right.</p>
+<p><strong>(b)</strong> TLC reports <code>Invariant AtMostOnce is violated</code> with a 5-state trace:</p>
+<!--fig:cron-->
+<p>Both servers ran <code>SELECT owner</code> and saw it empty before either wrote. n1's <code>UPDATE</code> doesn't change what n2 already read, and n2's <code>UPDATE</code> overwrites the owner with its own name. The backup runs twice, and the table even says n2 owns it. This is check-then-act: the decision is based on a value that may be stale by the time the action happens.</p>
+<p><strong>(c)</strong> Make the check part of the write:</p>
+<pre><code>--------------------------- MODULE PSl5_CronClaim ---------------------------
+CONSTANT Node                   \* servers that each run the same crontab
+VARIABLES pc,                   \* pc[n][j]: where node n is with job j tonight
+          owner                 \* owner[j]: the node in the jobs table, or "none"
+
+Jobs == {"backup", "report"}
+
+TypeOK == /\ pc \in [Node -&gt; [Jobs -&gt; {"idle", "ran", "skipped"}]]
+          /\ \A j \in Jobs : owner[j] = "none" \/ owner[j] \in Node
+
+Init == /\ pc = [n \in Node |-&gt; [j \in Jobs |-&gt; "idle"]]
+        /\ owner = [j \in Jobs |-&gt; "none"]
+
+Set(n, j, v) == [pc EXCEPT ![n] = [pc[n] EXCEPT ![j] = v]]
+
+Ready(j) == j = "report" =&gt; \E n \in Node : pc[n]["backup"] = "ran"
+
+\* UPDATE jobs SET owner = n WHERE name = j AND owner IS NULL
+\* One statement: the check and the write are one step.
+Claim(n, j) == /\ pc[n][j] = "idle"
+               /\ owner[j] = "none"
+               /\ Ready(j)
+               /\ owner' = [owner EXCEPT ![j] = n]
+               /\ pc' = Set(n, j, "ran")
+
+Skip(n, j) == /\ pc[n][j] = "idle"
+              /\ owner[j] # "none"
+              /\ pc' = Set(n, j, "skipped")
+              /\ owner' = owner
+
+Next == \E n \in Node : \E j \in Jobs : Claim(n, j) \/ Skip(n, j)
+
+AtMostOnce == \A j \in Jobs : \A n, m \in Node :
+                (pc[n][j] = "ran" /\ pc[m][j] = "ran") =&gt; n = m
+
+NotAllRan == ~(\A j \in Jobs : \E n \in Node : pc[n][j] = "ran")
+
+AllFinished == \A n \in Node : \A j \in Jobs : pc[n][j] \in {"ran", "skipped"}
+
+\* An intended stop: every node is done for the night. Nothing changes.
+Finished == /\ AllFinished
+            /\ pc' = pc
+            /\ owner' = owner
+
+NextOrDone == Next \/ Finished
+=============================================================================</code></pre>
+<p>The module also holds the definitions for parts (d) and (e). With the config of (b), TLC finds no error and 21 distinct states. The model now says the check and the write are one step, so it is your job to make that true in the system too. A single <code>UPDATE … WHERE owner IS NULL</code> does it in Postgres at the default isolation level, read committed: when two such statements hit the same row, the second waits for the first to commit, then re-checks its <code>WHERE</code> clause against the new row and updates nothing. The server then sees that zero rows changed, and skips the job.</p>
+<p><strong>(d)</strong> Claim <code>NotAllRan</code>, which says that it never happens that every job has run somewhere. TLC reports it violated with a 3-state trace: <code>Claim("n1", "backup")</code>, then <code>Claim("n1", "report")</code>. The report comes second because <code>Ready</code> disables it until a backup has run, exactly as <code>app = 2</code> forced the backfill after v2 in the migration runbook. The guard is the dependency, and TLC's trace is a schedule that respects it.</p>
+<p><strong>(e)</strong> With the deadlock check on, TLC reports <code>Deadlock reached</code> after a 5-state trace that ends with n1 having run both jobs and n2 having skipped both. Nothing is left to do, so this is termination, as with the counter in {{lesson:counter}}. Rather than turn the check off, the module defines <code>Finished</code>, which is enabled only when every entry of <code>pc</code> is <code>"ran"</code> or <code>"skipped"</code> and changes nothing, and <code>NextOrDone == Next \/ Finished</code>. With <code>NEXT NextOrDone</code> and the deadlock check on, TLC finds no error in 21 states. That shows something the earlier run couldn't: every state with no further step is a finished night. If <code>Ready</code> could block the report forever, this run would report the deadlock.</p>
+<p>The pieces came from four chapters: functions and quantifiers for “at most once across nodes”, TCommit's style of guard that reads every process, the runbook guard and never-reached claim from {{ref:ps-l4}}, and the deadlock-or-termination question from Lecture 3.</p>
+</details>
+</article>

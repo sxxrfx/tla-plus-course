@@ -1,0 +1,369 @@
+<h1>Problem set 10: say what stands for what.</h1>
+<p class="lead">Four refinement problems. Each gives you an implementation with more machinery than its spec, such as shards, files on disk, replicas or an optimistic screen. You write the refinement mapping, check it with TLC, and decide what a failed check means. You'll use <code>RECURSIVE</code> and <code>INSTANCE … WITH</code> from lecture 10. The last problem adds the message sets of lecture 6 and the fairness of lecture 9.</p>
+<p>Every module below was checked with TLC exactly as shown. To check a refinement, do what {{lesson:refinement}} did: put the implementation's <code>Spec</code> under <code>SPECIFICATION</code>, and the instantiated abstract spec under <code>PROPERTY</code>. Keep the abstract module in the same folder, because <code>INSTANCE</code> looks for it there. Counts like "distinct states" only match if your copy is identical.</p>
+
+<article class="problem" id="ps-l10-sharded">
+<p class="problem-meta"><span>Problem 1</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">Infrastructure</span></p>
+<h2>A sharded like counter is still a counter</h2>
+<p class="uses">Draws on {{ref:refinement}}, {{ref:impl-general}} and {{ref:implementation}}.</p>
+<p>A social app keeps the like count of each post in one database row. A popular post turns that row into a hot spot: every like is an update of the same row, and concurrent updates of one row wait for each other. The team splits the counter into shards. Each like increments one shard, chosen at random, and the page shows the sum of the shards. The product promise is unchanged: the number on the page goes up by one per like and never goes down.</p>
+<p>That promise is this spec:</p>
+<pre><code>---------------- MODULE PSl10_Counter ----------------
+EXTENDS Naturals
+VARIABLE count
+Init == count = 0
+Inc == count' = count + 1
+Spec == Init /\ [][Inc]_count
+======================================================</code></pre>
+<p>Here is the implementation. <code>MaxPerShard</code> only keeps the model finite.</p>
+<pre><code>---------------- MODULE PSl10_Sharded ----------------
+EXTENDS Naturals
+CONSTANTS Shards, MaxPerShard
+VARIABLE shard
+Init == shard = [s \in Shards |-&gt; 0]
+Inc(s) == /\ shard[s] &lt; MaxPerShard
+          /\ shard' = [shard EXCEPT ![s] = shard[s] + 1]
+Next == \E s \in Shards : Inc(s)
+Spec == Init /\ [][Next]_shard
+======================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Shards = {s1, s2, s3}
+          MaxPerShard = 2
+PROPERTY CounterSpec
+CHECK_DEADLOCK FALSE</code></pre>
+<ol class="tasks">
+<li>Add a recursive operator <code>SumOver(f, S)</code>, the sum of <code>f[s]</code> over all s in a finite set S. Then add the refinement mapping as an instance <code>C</code> of <code>PSl10_Counter</code>, define <code>CounterSpec == C!Spec</code>, and run the model above.</li>
+<li>To keep reads cheap, a job periodically folds a shard into a stored <code>base</code> value: it adds the shard's count to <code>base</code> and resets the shard to 0. Add a <code>base</code> variable and a <code>Fold(s)</code> action, map <code>count</code> to <code>base</code> plus the shard sum, and check again. You'll need a state constraint, because shards can now refill forever.</li>
+<li>The shards are moved to an in-memory cache without persistence. Model a cache restart as <code>Restart(s)</code>, which sets one shard back to 0. What does TLC report?</li>
+<li>A teammate maps <code>count &lt;- shard[Home]</code>, where <code>Home</code> is the shard their app server writes to. TLC finds no error. Why is that result worthless as evidence for the product promise?</li>
+</ol>
+<!--fig:shards-->
+<div class="numcheck" data-answer="27|twenty seven|twenty-seven" data-explain="Each of the three shards independently holds 0, 1 or 2, and every combination is reachable by incrementing shards in some order: 3 × 3 × 3 = 27." data-retry="How many values can one shard take, and are all combinations reachable?"><label>Distinct states TLC finds for the sharded counter with the cfg above <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="2" data-explain="A fold moves 3 likes from a shard into base. The sum, and so the mapped count, doesn't change, so it maps to a stuttering step, which the counter spec allows."><fieldset><legend>Under the mapping <code>count &lt;- base + sum of shards</code>, what abstract step does a <code>Fold(s)</code> step with <code>shard[s] = 3</code> correspond to?</legend><label><input type="radio" name="q-ps-l10-sharded" value="0">Three <code>Inc</code> steps</label><label><input type="radio" name="q-ps-l10-sharded" value="1">None: refinement fails</label><label><input type="radio" name="q-ps-l10-sharded" value="2">A stuttering step</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Write <code>SumOver</code> like <code>RemoveX</code> in {{lesson:impl-general}}: an empty set sums to 0, and otherwise pick one element with <code>CHOOSE</code>, add its value, and recurse on the rest. For the restart, ask what happens to the mapped count, and whether any step of <code>PSl10_Counter</code> can do that.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p>(a) The completed module. TLC finds no error, with 55 states generated and 27 distinct states.</p>
+<pre><code>---------------- MODULE PSl10_Sharded ----------------
+EXTENDS Naturals
+CONSTANTS Shards, MaxPerShard
+VARIABLE shard
+Init == shard = [s \in Shards |-&gt; 0]
+Inc(s) == /\ shard[s] &lt; MaxPerShard
+          /\ shard' = [shard EXCEPT ![s] = shard[s] + 1]
+Next == \E s \in Shards : Inc(s)
+Spec == Init /\ [][Next]_shard
+
+RECURSIVE SumOver(_, _)
+SumOver(f, S) == IF S = {} THEN 0
+                 ELSE LET s == CHOOSE x \in S : TRUE
+                      IN  f[s] + SumOver(f, S \ {s})
+Total == SumOver(shard, Shards)
+
+C == INSTANCE PSl10_Counter WITH count &lt;- Total
+THEOREM Spec =&gt; C!Spec
+CounterSpec == C!Spec
+======================================================</code></pre>
+<p>The cfg line <code>CHECK_DEADLOCK FALSE</code> matters here: once every shard reaches <code>MaxPerShard</code> no step is enabled, which is the end of the model, not a bug. <code>CHOOSE</code> is safe in <code>SumOver</code> because addition doesn't care which element comes first. Every <code>Inc(s)</code> raises the sum by exactly one, so it is an <code>Inc</code> step of the counter.</p>
+<p>(b) With a base value and a fold:</p>
+<pre><code>---------------- MODULE PSl10_ShardedFold ----------------
+EXTENDS Naturals
+CONSTANTS Shards, MaxPerShard
+VARIABLES shard, base
+vars == &lt;&lt;shard, base&gt;&gt;
+Init == /\ shard = [s \in Shards |-&gt; 0]
+        /\ base = 0
+Inc(s) == /\ shard[s] &lt; MaxPerShard
+          /\ shard' = [shard EXCEPT ![s] = shard[s] + 1]
+          /\ UNCHANGED base
+Fold(s) == /\ shard[s] &gt; 0
+           /\ base' = base + shard[s]
+           /\ shard' = [shard EXCEPT ![s] = 0]
+Next == \E s \in Shards : Inc(s) \/ Fold(s)
+Spec == Init /\ [][Next]_vars
+
+RECURSIVE SumOver(_, _)
+SumOver(f, S) == IF S = {} THEN 0
+                 ELSE LET s == CHOOSE x \in S : TRUE
+                      IN  f[s] + SumOver(f, S \ {s})
+Total == base + SumOver(shard, Shards)
+Bound == Total &lt;= 4
+
+C == INSTANCE PSl10_Counter WITH count &lt;- Total
+CounterSpec == C!Spec
+==========================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Shards = {s1, s2, s3}
+          MaxPerShard = 2
+CONSTRAINT Bound
+PROPERTY CounterSpec
+CHECK_DEADLOCK FALSE</code></pre>
+<p>TLC finds no error: 220 states generated, 55 distinct. A fold changes the implementation's state but not the mapped count, so it maps to stuttering, as the quiz says. This is the same move as <code>TMAbort</code> in {{lesson:implementation}} and as the <code>ARcv</code> of a corrupted message in {{lesson:refinement}}: internal work is invisible in the abstract spec.</p>
+<p>(c) Add <code>Restart(s) == shard[s] &gt; 0 /\ shard' = [shard EXCEPT ![s] = 0]</code> as a disjunct of <code>Next</code> (module <code>PSl10_ShardedRestart</code>). TLC reports that the action property of <code>PSl10_Counter</code> is violated, with three states: shards all 0; <code>Inc(s1)</code>, so the count is 1; <code>Restart(s1)</code>, so the count is 0 again. The figure shows a longer behavior of the same module. The count fell, and the abstract spec only allows <code>count' = count + 1</code> or no change. The product consequence is that a like disappears from the page. A cache restart that forgets data is exactly a step the contract forbids, so the shards need persistence, or a recovery step that restores them.</p>
+<p>(d) With <code>Home = s1</code>, TLC finds no error (27 distinct states). Every step either raises <code>shard[s1]</code> by one or leaves it alone, so every step is an <code>Inc</code> or a stutter. The check is correct; the claim is just weak. Under this mapping the abstract "count" ignores two thirds of the likes. A refinement theorem is only as meaningful as its mapping: the mapping says what the implementation's state <em>means</em>, and here it means the wrong thing. TLC can tell you a mapping works, but not that it is the one your users read.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l10-lsm">
+<p class="problem-meta"><span>Problem 2</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Databases</span></p>
+<h2>An LSM tree implements a map</h2>
+<p class="uses">Draws on {{ref:refinement}}, {{ref:impl-general}}, {{ref:abspec}} and {{ref:sets}}.</p>
+<p>Storage engines such as LevelDB and RocksDB are log-structured merge trees. A write goes into an in-memory table, the memtable. When the memtable is big enough, it is flushed to disk as an immutable file. Compaction later merges files, keeping the newer value of each key. A read checks the memtable first, then the files from newest to oldest. The application sees none of this. It sees a map from keys to values:</p>
+<pre><code>---------------- MODULE PSl10_KV ----------------
+CONSTANTS Keys, Vals, NoVal
+VARIABLE store
+Init == store = [k \in Keys |-&gt; NoVal]
+Put(k, v) == store' = [store EXCEPT ![k] = v]
+Next == \E k \in Keys, v \in Vals : Put(k, v)
+Spec == Init /\ [][Next]_store
+=================================================</code></pre>
+<p>The engine, with <code>tables[1]</code> the oldest file and at most <code>MaxTables</code> files:</p>
+<pre><code>---------------- MODULE PSl10_LSM ----------------
+EXTENDS Naturals, Sequences
+CONSTANTS Keys, Vals, NoVal, MaxTables
+VARIABLES mem, tables
+vars == &lt;&lt;mem, tables&gt;&gt;
+Empty == [k \in Keys |-&gt; NoVal]
+Init == /\ mem = Empty
+        /\ tables = &lt;&lt;&gt;&gt;              \* tables[1] is the oldest
+Put(k, v) == /\ mem' = [mem EXCEPT ![k] = v]
+             /\ UNCHANGED tables
+Flush == /\ mem # Empty
+         /\ Len(tables) &lt; MaxTables
+         /\ tables' = Append(tables, mem)
+         /\ mem' = Empty
+Merge(older, newer) ==
+    [k \in Keys |-&gt; IF newer[k] # NoVal THEN newer[k] ELSE older[k]]
+Compact == /\ Len(tables) &gt;= 2
+           /\ tables' = &lt;&lt;Merge(tables[1], tables[2])&gt;&gt; \o Tail(Tail(tables))
+           /\ UNCHANGED mem
+Next == \/ \E k \in Keys, v \in Vals : Put(k, v)
+        \/ Flush
+        \/ Compact
+Spec == Init /\ [][Next]_vars
+==================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Keys = {k1, k2}
+          Vals = {v1, v2}
+          NoVal = NoVal
+          MaxTables = 2
+PROPERTY KVSpec
+CHECK_DEADLOCK FALSE</code></pre>
+<ol class="tasks">
+<li>Write <code>Get(k)</code>, the value a read returns, using a recursive helper that searches the files from newest to oldest. Then add the mapping <code>KV == INSTANCE PSl10_KV WITH store &lt;- …</code> and <code>KVSpec == KV!Spec</code>, and check it.</li>
+<li>Which actions of the engine map to stuttering? Say why for each.</li>
+<li>A refactoring swaps the arguments of <code>Merge</code> in <code>Compact</code>, so the older file wins. Check the buggy engine with <code>Keys = {k1, k2}</code>, and then with <code>Keys = {k1}</code>.</li>
+<li>Explain the difference between the two runs. What does it say about how strong <code>PSl10_KV</code> is as a contract?</li>
+</ol>
+<!--fig:lsm-->
+<div class="numcheck" data-answer="8|eight" data-explain="The bug needs two files that disagree on both keys: two puts and a flush, two more puts and a flush, then the compaction. That's 7 steps, so 8 states with the initial one. TLC's breadth-first search finds no shorter trace." data-retry="Count the puts, flushes and the compaction the bug needs, then add the initial state."><label>Number of states in TLC's counterexample for the buggy compaction with two keys <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="0" data-explain="With one key, rolling k1 back from v2 to v1 looks exactly like the step Put(k1, v1), which the map spec allows at any time. TLC finds no error in 21 distinct states."><fieldset><legend>With <code>Keys = {k1}</code>, what does TLC report for the buggy compaction?</legend><label><input type="radio" name="q-ps-l10-lsm" value="0">No error</label><label><input type="radio" name="q-ps-l10-lsm" value="1">The same violation, in fewer steps</label><label><input type="radio" name="q-ps-l10-lsm" value="2">A deadlock</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Give the helper the index of the file to look at: <code>Find(k, i)</code> looks in <code>tables[i]</code> and, if the key isn't there, in <code>tables[i - 1]</code>. Start it at <code>Len(tables)</code>; index 0 means "not found". For (d), ask which steps of <code>PSl10_KV</code> could explain a one-key rollback.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p>(a) The added definitions:</p>
+<pre><code>RECURSIVE Find(_, _)
+Find(k, i) == IF i = 0 THEN NoVal
+              ELSE IF tables[i][k] # NoVal THEN tables[i][k]
+              ELSE Find(k, i - 1)
+Get(k) == IF mem[k] # NoVal THEN mem[k] ELSE Find(k, Len(tables))
+
+KV == INSTANCE PSl10_KV WITH store &lt;- [k \in Keys |-&gt; Get(k)]
+THEOREM Spec =&gt; KV!Spec
+KVSpec == KV!Spec</code></pre>
+<p>TLC finds no error: 3277 states generated, 657 distinct.</p>
+<p>(b) <code>Flush</code> and <code>Compact</code> map to stuttering. A flush moves the memtable into the newest file, and a read finds the same values there, because nothing newer exists. A correct compaction replaces the two oldest files by one in which the newer value of each key wins, which is what a read of those two files returned anyway. So does a <code>Put</code> of the value a read already returns.</p>
+<p>(c) With two keys, TLC reports the action property of <code>PSl10_KV</code> violated after eight states. The figure shows the important ones: <code>Put(k1, v1)</code>, <code>Put(k2, v1)</code>, <code>Flush</code>, <code>Put(k1, v2)</code>, <code>Put(k2, v2)</code>, <code>Flush</code>, and then <code>Compact</code>, which leaves only <code>&lt;&lt;(k1 :&gt; v1 @@ k2 :&gt; v1)&gt;&gt;</code>. The mapped store went from both keys at v2 to both at v1 in one step. Each <code>Put</code> changes one key, so no step of the map spec can do that.</p>
+<p>(d) With one key, TLC finds no error, in 21 distinct states. The rollback of k1 from v2 to v1 is the same pair of mapped states as <code>Put(k1, v1)</code>, and the map spec lets anyone put any value at any time. The bug was real in both runs; the refinement check could only see it when no abstract step explained it. <code>PSl10_KV</code> says nothing about <em>who</em> writes or <em>which</em> value, so data loss that looks like a write passes. To catch it with one key, put the client into the model, for example a variable recording the last value the client wrote, and require each mapped change to equal it. A weak abstract spec makes refinement easy to pass, and so says less.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l10-rlog">
+<p class="problem-meta"><span>Problem 3</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Distributed systems</span></p>
+<h2>A replicated log's commit index</h2>
+<p class="uses">Draws on {{ref:refinement}}, {{ref:replication}}, {{ref:consensus}} and {{ref:abspec}}.</p>
+<p>In Raft-style replication, clients send commands to a leader, which appends them to its log and copies them to followers. An entry counts as committed once a majority of servers store it, and the leader's commit index says how far that goes. The guarantee to clients is an append-only log: committed entries appear one after another and never change.</p>
+<pre><code>---------------- MODULE PSl10_Log ----------------
+EXTENDS Sequences
+CONSTANT Vals
+VARIABLE log
+Init == log = &lt;&lt;&gt;&gt;
+Next == \E v \in Vals : log' = Append(log, v)
+Spec == Init /\ [][Next]_log
+==================================================</code></pre>
+<p>The model has one fixed leader and two followers, so a majority is two of three. Its mapping says the abstract log is the leader's log up to the commit index:</p>
+<pre><code>---------------- MODULE PSl10_RLog ----------------
+EXTENDS Naturals, Sequences, FiniteSets
+CONSTANTS Vals, Followers, MaxLen
+VARIABLES llog, flog, commit
+vars == &lt;&lt;llog, flog, commit&gt;&gt;
+Init == /\ llog = &lt;&lt;&gt;&gt;                       \* the leader's log
+        /\ flog = [f \in Followers |-&gt; &lt;&lt;&gt;&gt;]   \* each follower's log
+        /\ commit = 0                         \* the leader's commit index
+Request(v) == /\ Len(llog) &lt; MaxLen
+              /\ llog' = Append(llog, v)
+              /\ UNCHANGED &lt;&lt;flog, commit&gt;&gt;
+Replicate(f) == /\ Len(flog[f]) &lt; Len(llog)
+                /\ flog' = [flog EXCEPT ![f] =
+                              Append(flog[f], llog[Len(flog[f]) + 1])]
+                /\ UNCHANGED &lt;&lt;llog, commit&gt;&gt;
+\* Entry n is on a majority: the leader plus at least half the followers.
+OnMajority(n) == 2 * (1 + Cardinality({f \in Followers : Len(flog[f]) &gt;= n}))
+                   &gt; 1 + Cardinality(Followers)
+AdvanceCommit == /\ \E n \in (commit + 1)..Len(llog) :
+                       /\ OnMajority(n)
+                       /\ commit' = n
+                 /\ UNCHANGED &lt;&lt;llog, flog&gt;&gt;
+Next == \/ \E v \in Vals : Request(v)
+        \/ \E f \in Followers : Replicate(f)
+        \/ AdvanceCommit
+Spec == Init /\ [][Next]_vars
+
+Committed == [i \in 1..commit |-&gt; llog[i]]
+L == INSTANCE PSl10_Log WITH log &lt;- Committed
+LogSpec == L!Spec
+===================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Vals = {a, b}
+          Followers = {f1, f2}
+          MaxLen = 3
+PROPERTY LogSpec
+CHECK_DEADLOCK FALSE</code></pre>
+<ol class="tasks">
+<li>Run it. TLC reports a violation. Is any committed entry lost or changed in the trace? Say exactly which abstract step is missing.</li>
+<li>Fix it in two ways: change <code>AdvanceCommit</code> to move the index by one, and, separately, keep the implementation and weaken the abstract spec so one step may append several entries. Check both.</li>
+<li>Add a failover step: a new leader that holds only the committed prefix takes over, and uncommitted entries are discarded everywhere. (Real Raft is subtler; this is the part that matters here.) Check the mapping again, and then the mapping <code>log &lt;- llog</code>.</li>
+</ol>
+<!--fig:rlog-->
+<div class="numcheck" data-answer="6|six" data-explain="Two requests, two replications to one follower, and the jump of the commit index: five steps after the initial state." data-retry="The commit index can only jump by two once two entries exist and one follower has both."><label>Number of states in the shortest counterexample for the unchanged module <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="Replicate changes only a follower's log. The mapped log is a prefix of the leader's log, so it is unchanged: a stuttering step."><fieldset><legend>Under the mapping <code>Committed</code>, what is a <code>Replicate(f)</code> step?</legend><label><input type="radio" name="q-ps-l10-rlog" value="0">An append to the abstract log</label><label><input type="radio" name="q-ps-l10-rlog" value="1">A stuttering step</label><label><input type="radio" name="q-ps-l10-rlog" value="2">A violation, since followers aren't in the abstract spec</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>A refinement maps each implementation step to <em>one</em> abstract step or to a stutter. For the weaker spec, say "the new log is longer and keeps every old entry" with a quantifier over <code>1..Len(log)</code>, and use <code>log' \in Seq(Vals)</code> rather than an existential over <code>Seq(Vals)</code>, which TLC can't enumerate.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p>(a) TLC's shortest trace has six states, shown in the figure: two <code>Request(a)</code> steps, two <code>Replicate(f1)</code> steps, and <code>AdvanceCommit</code> setting <code>commit</code> from 0 to 2. Both entries are on a majority, the leader and f1, so committing them is safe, and nothing is lost or changed. But the mapped log went from <code>&lt;&lt;&gt;&gt;</code> to <code>&lt;&lt;a, a&gt;&gt;</code> in one step, and <code>PSl10_Log</code> appends one entry per step. Refinement doesn't let one implementation step stand for two abstract steps. The implementation isn't wrong; the abstract spec's steps are finer than the implementation's.</p>
+<p>(b) First fix, in the implementation (module <code>PSl10_RLogOne</code>):</p>
+<pre><code>AdvanceCommit == /\ commit &lt; Len(llog)
+                 /\ OnMajority(commit + 1)
+                 /\ commit' = commit + 1
+                 /\ UNCHANGED &lt;&lt;llog, flog&gt;&gt;</code></pre>
+<p>Second fix, in the spec. The model keeps the jumping <code>AdvanceCommit</code> and maps to this module instead (<code>PSl10_RLogBatch</code>):</p>
+<pre><code>---------------- MODULE PSl10_LogBatch ----------------
+EXTENDS Naturals, Sequences
+CONSTANT Vals
+VARIABLE log
+Init == log = &lt;&lt;&gt;&gt;
+\* One step may append one or more entries; earlier entries never change.
+Extend == /\ log' \in Seq(Vals)
+          /\ Len(log') &gt; Len(log)
+          /\ \A i \in 1..Len(log) : log'[i] = log[i]
+Spec == Init /\ [][Extend]_log
+=======================================================</code></pre>
+<p>TLC finds no error with either: 1197 states generated and 503 distinct for the one-at-a-time commit, 1425 and 503 for the batch spec. Which fix is right depends on what clients can observe. If a client can watch the committed log grow, the batch spec is honest about what it will see. If the abstract spec is shared with other components that assume one entry at a time, change the implementation.</p>
+<p>(c) The failover step, together with the one-at-a-time commit (module <code>PSl10_RLogFix</code>):</p>
+<pre><code>Prefix(s, n) == [i \in 1..n |-&gt; s[i]]
+Failover == /\ Len(llog) &gt; commit
+            /\ llog' = Prefix(llog, commit)
+            /\ flog' = [f \in Followers |-&gt;
+                          IF Len(flog[f]) &gt; commit THEN Prefix(flog[f], commit)
+                          ELSE flog[f]]
+            /\ UNCHANGED commit</code></pre>
+<p>With the <code>Committed</code> mapping, TLC finds no error: 1617 states generated, 503 distinct. Failover discards only entries past <code>commit</code>, so the mapped log doesn't change, and it is a stutter. With <code>log &lt;- llog</code> (module <code>PSl10_RLogLeader</code>), TLC reports a violation in three states: <code>Request(a)</code> makes the leader's log <code>&lt;&lt;a&gt;&gt;</code>, and <code>Failover</code> empties it. Without failover, <code>log &lt;- llog</code> passes too (module <code>PSl10_RLogOneLeader</code>, 503 distinct states), because a single leader's log only grows. That's the real reason the commit index exists: it marks the part of the log that survives a change of leader.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l10-taglist">
+<p class="problem-meta"><span>Problem 4</span><span class="level" title="Difficulty 3 of 3">●●●</span><span class="domain">UI design system</span></p>
+<h2>Which list does an optimistic tag input refine?</h2>
+<p class="uses">Draws on {{ref:refinement}}, {{ref:messages}}, {{ref:fairness}}, {{ref:implementation}} and {{ref:ps-l9}}.</p>
+<p>A design system ships a tag input, used to put labels on issues. When the user adds a tag, it appears at once, greyed out as pending, and a request goes to the server. If the server accepts, the tag turns solid. If it rejects, for example because the user may not use that label, the tag disappears and a toast explains why. The server's own contract is simple: an issue's tags are only ever added. Messages are a set that only grows, as in {{lesson:messages}}, so the model allows any delay, reordering and duplicate delivery.</p>
+<pre><code>---------------- MODULE PSl10_TagSet ----------------
+CONSTANT Tags
+VARIABLE tags
+Init == tags = {}
+Add(t) == /\ t \notin tags
+          /\ tags' = tags \cup {t}
+Next == \E t \in Tags : Add(t)
+Spec == Init /\ [][Next]_tags
+=====================================================</code></pre>
+<pre><code>---------------- MODULE PSl10_TagList ----------------
+CONSTANT Tags
+VARIABLES pending, confirmed, server, msgs
+vars == &lt;&lt;pending, confirmed, server, msgs&gt;&gt;
+Msgs == [type : {"add", "ok", "rejected"}, tag : Tags]
+TypeOK == /\ pending \subseteq Tags
+          /\ confirmed \subseteq Tags
+          /\ server \subseteq Tags
+          /\ msgs \subseteq Msgs
+Init == /\ pending = {}      \* shown greyed out, waiting for the server
+        /\ confirmed = {}    \* shown normally
+        /\ server = {}       \* the server's stored tags
+        /\ msgs = {}
+Sent(t) == \E m \in msgs : m.tag = t
+\* The user types a tag; it appears at once, marked pending.
+UserAdd(t) == /\ ~Sent(t)
+              /\ pending' = pending \cup {t}
+              /\ msgs' = msgs \cup {[type |-&gt; "add", tag |-&gt; t]}
+              /\ UNCHANGED &lt;&lt;confirmed, server&gt;&gt;
+Answered(t) == \E m \in msgs : m.tag = t /\ m.type \in {"ok", "rejected"}
+ServerAccept(t) == /\ [type |-&gt; "add", tag |-&gt; t] \in msgs
+                   /\ ~Answered(t)
+                   /\ server' = server \cup {t}
+                   /\ msgs' = msgs \cup {[type |-&gt; "ok", tag |-&gt; t]}
+                   /\ UNCHANGED &lt;&lt;pending, confirmed&gt;&gt;
+ServerReject(t) == /\ [type |-&gt; "add", tag |-&gt; t] \in msgs
+                   /\ ~Answered(t)
+                   /\ msgs' = msgs \cup {[type |-&gt; "rejected", tag |-&gt; t]}
+                   /\ UNCHANGED &lt;&lt;pending, confirmed, server&gt;&gt;
+ClientOk(t) == /\ [type |-&gt; "ok", tag |-&gt; t] \in msgs
+               /\ t \in pending
+               /\ pending' = pending \ {t}
+               /\ confirmed' = confirmed \cup {t}
+               /\ UNCHANGED &lt;&lt;server, msgs&gt;&gt;
+ClientRollback(t) == /\ [type |-&gt; "rejected", tag |-&gt; t] \in msgs
+                     /\ t \in pending
+                     /\ pending' = pending \ {t}
+                     /\ UNCHANGED &lt;&lt;confirmed, server, msgs&gt;&gt;
+Next == \E t \in Tags : \/ UserAdd(t)
+                        \/ ServerAccept(t) \/ ServerReject(t)
+                        \/ ClientOk(t) \/ ClientRollback(t)
+Spec == Init /\ [][Next]_vars
+Fairness == \A t \in Tags :
+              /\ WF_vars(ServerAccept(t) \/ ServerReject(t))
+              /\ WF_vars(ClientOk(t) \/ ClientRollback(t))
+FairSpec == Spec /\ Fairness
+
+Shown == pending \cup confirmed
+ByShown     == INSTANCE PSl10_TagSet WITH tags &lt;- Shown
+ByConfirmed == INSTANCE PSl10_TagSet WITH tags &lt;- confirmed
+ByServer    == INSTANCE PSl10_TagSet WITH tags &lt;- server
+ShownRefines     == ByShown!Spec
+ConfirmedRefines == ByConfirmed!Spec
+ServerRefines    == ByServer!Spec
+ConfirmedOnServer == confirmed \subseteq server
+Settles == \A t \in Tags : (t \in pending) ~&gt; (t \notin pending)
+Converges == &lt;&gt;[](Shown = server)
+======================================================</code></pre>
+<pre><code>SPECIFICATION FairSpec
+CONSTANT Tags = {t1, t2}
+INVARIANT TypeOK ConfirmedOnServer
+PROPERTY ConfirmedRefines ServerRefines Settles Converges
+CHECK_DEADLOCK FALSE</code></pre>
+<ol class="tasks">
+<li>Check the three mappings: what the user sees (<code>ShownRefines</code>), the solid tags (<code>ConfirmedRefines</code>), and the server's tags (<code>ServerRefines</code>). Which ones hold? For any that fails, describe TLC's trace as the user would see it.</li>
+<li>Is the failing one a bug in the component? Say which abstract spec the screen does refine, in one sentence.</li>
+<li>{{ref:ps-l9}} asked whether every request is eventually decided. Ask it here: check <code>Settles</code> with <code>Spec</code> instead of <code>FairSpec</code>, and explain the result. Then replace <code>Fairness</code> by two conditions: weak fairness of "the server answers some tag" and of "the client processes some reply". Is that enough here? Would it be enough for a lock that two processes take over and over?</li>
+<li>Explain why <code>UserAdd</code> needs the guard <code>~Sent(t)</code>. What could an old <code>rejected</code> message do if the user re-added the same tag?</li>
+</ol>
+<!--fig:tags-->
+<div class="numcheck" data-answer="36|thirty six|thirty-six" data-explain="TLC's run of the cfg above reports 61 states generated and 36 distinct states, with every invariant and property holding." data-retry="Run the cfg exactly as given, with FairSpec and both tags."><label>Distinct states TLC finds with the cfg above <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="0" data-explain="A rollback removes a tag from Shown, and PSl10_TagSet never removes one. confirmed and server only grow, one tag per step."><fieldset><legend>Which mapping fails?</legend><label><input type="radio" name="q-ps-l10-taglist" value="0"><code>tags &lt;- Shown</code></label><label><input type="radio" name="q-ps-l10-taglist" value="1"><code>tags &lt;- confirmed</code></label><label><input type="radio" name="q-ps-l10-taglist" value="2"><code>tags &lt;- server</code></label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Run each mapping in its own model with one <code>PROPERTY</code> line. For (c), the aggregate condition only forces <em>some</em> enabled step. Ask whether any tag can be passed over forever when each tag needs just one answer and one reply.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p>(a) With the cfg as given, TLC finds no error: <code>ConfirmedRefines</code>, <code>ServerRefines</code>, <code>Settles</code> and <code>Converges</code> all hold, as do <code>TypeOK</code> and <code>ConfirmedOnServer</code>, in 36 distinct states. With <code>PROPERTY ShownRefines</code>, TLC reports the action property of <code>PSl10_TagSet</code> violated in four states: <code>UserAdd(t1)</code>, <code>ServerReject(t1)</code>, <code>ClientRollback(t1)</code>. The user typed t1, saw it greyed out, then saw it vanish, as in the figure. The last step removes t1 from <code>Shown</code>, which no <code>Add</code> step can do.</p>
+<p>(b) It's not a bug. It is the speculative-display contract from the editor example in {{lesson:refinement}}: the screen shows a guess, and a guess can be withdrawn. The screen refines "tags are added, and pending ones may be withdrawn", a different spec with a <code>Withdraw</code> action. What must not happen is a solid tag disappearing, and <code>ConfirmedRefines</code> together with <code>ConfirmedOnServer</code> rules that out. The design-system rule that follows is "only solid tags are promises". So pending tags need a visibly different style, and anything that copies the list, such as an export, should read <code>confirmed</code>.</p>
+<p>(c) With <code>SPECIFICATION Spec</code>, TLC reports <code>Settles</code> violated. Its counterexample has both tags accepted by the server, t2's reply received, and then stuttering forever with t1 still pending, although the <code>ok</code> for t1 is in <code>msgs</code>. TLC also warns that the stuttering counterexample may be caused by a missing fairness constraint. Without fairness, nothing requires the client to process a reply. <code>FairSpec</code> asks for weak fairness of "answer t" and "process the reply to t" for each tag t. That suffices: once t's request is in <code>msgs</code>, answering it stays enabled until it happens, and so does processing the reply while t is pending.</p>
+<p>The aggregate version also suffices here (module <code>PSl10_TagListAgg</code>):</p>
+<pre><code>AggFairness == /\ WF_vars(\E t \in Tags : ServerAccept(t) \/ ServerReject(t))
+               /\ WF_vars(\E t \in Tags : ClientOk(t) \/ ClientRollback(t))
+AggSpec == Spec /\ AggFairness</code></pre>
+<p>With <code>SPECIFICATION AggSpec</code>, TLC finds that <code>Settles</code> and <code>Converges</code> hold, in the same 36 states. Each tag is answered once and its reply processed once, and each such step disables itself. So "some answer happens" can only pick a different tag each time, and with finitely many tags every one gets its turn. A lock is different: if B can acquire, release and acquire again forever, "some process acquires" is satisfied by B alone, and A may wait forever. Per-item fairness is still the safer habit, because it keeps working if you later add retries that make an item's steps repeat.</p>
+<p>(d) Messages are never removed, so after a rejection <code>[type |-&gt; "rejected", tag |-&gt; t1]</code> stays in <code>msgs</code>. If the user could add t1 again, <code>ClientRollback(t1)</code> would be enabled at once by the old message, and the new attempt would be rolled back before the server saw it. This is the stale-response problem: replies need to identify the request they answer, not just the tag. A real component would put a request id in each message, and the guard would compare ids.</p>
+</details>
+</article>

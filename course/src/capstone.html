@@ -1,0 +1,137 @@
+<h1>Design a system whose failures cross boundaries.</h1>
+<p class="lead">No single pattern protects a payment service. The work is building a sequence of contracts and connecting their assumptions.</p>
+<p>This brings together {{lesson:idempotency}} for retries, {{lesson:fencing}} for stale authority, {{lesson:reconfiguration}} for membership, {{lesson:transactions}} for shared outcomes, and {{lesson:refinement}} for connecting the layers. Each of those lessons isolated one failure. Here they meet.</p>
+<p>You are building a payment service with two account shards, regional leaders, retried requests, a durable decision service, asynchronous events, and membership changes. The architecture is a study design, not a verified payment protocol.</p>
+<!--fig:arch-->
+<p>Read the diagram by bands. A failure in one band has a different cure from a failure in the next, and the authority column can damage any of them. Do not attempt one enormous model first.</p>
+<h2>Start with a precise contract</h2>
+<p>For each transfer ID t, fix source, destination, and amount. The same ID with different arguments must be rejected or assigned an explicit policy. Distinguish accepted, prepared, committed, applied, and acknowledged. The client’s reply is an observation; it does not define when money moved.</p>
+<p>At the simplest level, a transfer atomically updates both balances or leaves them unchanged. Refining that takes care: if concrete debit and credit happen at different times, map reserved or in-transit amounts appropriately. Checking visible balances during a partly applied transfer may report an intentional intermediate state as a bug, or hide one if you simply exclude that state.</p>
+<h2>Make the properties pull their weight</h2>
+<ul><li><strong>Conservation:</strong> spendable, reserved, and in-transit money sum to the initial total under your accounting abstraction.</li><li><strong>No overdraft:</strong> no concurrent preparation spends funds already reserved elsewhere.</li><li><strong>Decision agreement:</strong> a transfer never has both a committed and an aborted durable outcome.</li><li><strong>At-most-once effects:</strong> each debit, credit, and consumer effect occurs no more than once under its identity contract.</li><li><strong>Durable acknowledgement:</strong> a successful response has the required surviving evidence after the modeled crashes.</li><li><strong>Eventual resolution:</strong> under stated recovery, communication, and scheduling assumptions, every accepted transfer reaches a terminal response.</li></ul>
+<h2>A sequence of manageable experiments</h2>
+<ol><li><strong>Atomic ledger.</strong> Two accounts, integer amounts, two request IDs. Check conservation and no overdraft.</li><li><strong>Prepare and decide.</strong> Split the transfer across shards. Add reservation ownership and a shared durable decision. Check conflicting preparation and duplicate application.</li><li><strong>Crash recovery.</strong> Erase volatile state at every persistence boundary. Recover solely from the records you actually persist.</li><li><strong>Regional leadership.</strong> Model stale leaders and enforce epochs at write acceptance. Keep the decision service abstract at first, with a stated contract.</li><li><strong>Refine replication.</strong> Replace that contract with a bounded protocol model. Connect its guarantees to the transaction layer.</li><li><strong>Reconfiguration.</strong> Transfer authority and evidence while old messages remain in flight.</li><li><strong>Outbox and consumer.</strong> Retry publication after lost acknowledgements. Preserve local atomicity and downstream duplicate handling.</li></ol>
+<h2>Worked checkout: two regions, one order, and one last item</h2>
+<p>An online store has one remaining camera. Order r42 reserves the camera and requests a $100 charge. Region East applies the charge, but its response to the browser is lost. The user reloads and retries through Region West. Meanwhile a shipping worker consumes payment events. This story crosses identity, inventory, durability, and delivery.</p>
+<!--fig:retry-->
+<p>The dashed arrow in the chart is the point of the story: the retry is a new delivery of the same logical order. The module below starts one layer up, where both regions consult the same durable records, so it has no East or West variable. It models three things: a retry that may or may not keep its ID, stock, and a consumer that may or may not deduplicate.</p>
+<pre><code>---------------- MODULE CameraCheckout ----------------
+EXTENDS Naturals, FiniteSets
+CONSTANTS InitialStock, NewIdOnRetry, ConsumerDedup
+ASSUME /\ InitialStock \in 1..2
+       /\ NewIdOnRetry \in BOOLEAN
+       /\ ConsumerDedup \in BOOLEAN
+Orders == {"r42", "r43"}
+VARIABLES attempts,      \* order IDs the browser has sent so far
+          stockFree, stockReserved,
+          charges,       \* charges[r]: effects at the payment provider
+          decision,      \* decision[r]: "pending", "commit", "abort"
+          outbox,        \* events durably saved with the decision
+          shipments      \* shipments[r]: shipping effects, counted
+vars == &lt;&lt;attempts, stockFree, stockReserved,
+          charges, decision, outbox, shipments&gt;&gt;
+
+Init == /\ attempts = {"r42"}
+        /\ stockFree = InitialStock
+        /\ stockReserved = {}
+        /\ charges = [r \in Orders |-&gt; 0]
+        /\ decision = [r \in Orders |-&gt; "pending"]
+        /\ outbox = {}
+        /\ shipments = [r \in Orders |-&gt; 0]
+
+\* The reply was lost. The retry may reach either region; both consult
+\* the same durable records, so the region does not appear as state.
+\* Resending the same ID changes nothing here: it is a stuttering step.
+Retry == /\ attempts' = attempts \cup
+                {IF NewIdOnRetry THEN "r43" ELSE "r42"}
+         /\ attempts' # attempts
+         /\ UNCHANGED &lt;&lt;stockFree, stockReserved, charges,
+                        decision, outbox, shipments&gt;&gt;
+
+Reserve(r) == /\ r \in attempts
+              /\ decision[r] = "pending"
+              /\ r \notin stockReserved
+              /\ stockFree &gt; 0
+              /\ stockFree' = stockFree - 1
+              /\ stockReserved' = stockReserved \cup {r}
+              /\ UNCHANGED &lt;&lt;attempts, charges, decision, outbox, shipments&gt;&gt;
+
+SoldOut(r) == /\ r \in attempts
+              /\ decision[r] = "pending"
+              /\ r \notin stockReserved
+              /\ stockFree = 0
+              /\ decision' = [decision EXCEPT ![r] = "abort"]
+              /\ UNCHANGED &lt;&lt;attempts, stockFree, stockReserved,
+                             charges, outbox, shipments&gt;&gt;
+
+\* One durable boundary: the charge, the decision, and the outbox event.
+Pay(r) == /\ r \in stockReserved
+          /\ decision[r] = "pending"
+          /\ charges' = [charges EXCEPT ![r] = @ + 1]
+          /\ decision' = [decision EXCEPT ![r] = "commit"]
+          /\ outbox' = outbox \cup {r}
+          /\ UNCHANGED &lt;&lt;attempts, stockFree, stockReserved, shipments&gt;&gt;
+
+\* The event can be delivered again until the consumer's record says stop.
+Consume(r) == /\ r \in outbox
+              /\ ConsumerDedup =&gt; shipments[r] = 0
+              /\ shipments[r] &lt; 2
+              /\ shipments' = [shipments EXCEPT ![r] = @ + 1]
+              /\ UNCHANGED &lt;&lt;attempts, stockFree, stockReserved,
+                             charges, decision, outbox&gt;&gt;
+
+Next == \/ Retry
+        \/ \E r \in Orders :
+              Reserve(r) \/ SoldOut(r) \/ Pay(r) \/ Consume(r)
+Spec == Init /\ [][Next]_vars
+
+TypeOK == /\ attempts \subseteq Orders
+          /\ stockFree \in 0..InitialStock
+          /\ stockReserved \subseteq Orders
+          /\ charges \in [Orders -&gt; 0..2]
+          /\ decision \in [Orders -&gt; {"pending", "commit", "abort"}]
+          /\ outbox \subseteq Orders
+          /\ shipments \in [Orders -&gt; 0..2]
+OneChargePerId == \A r \in Orders : charges[r] &lt;= 1
+OneChargePerCheckout == charges["r42"] + charges["r43"] &lt;= 1
+StockConserved == stockFree + Cardinality(stockReserved) = InitialStock
+ShipOnlyCommitted == \A r \in Orders :
+    shipments[r] &gt; 0 =&gt; decision[r] = "commit"
+OneShipmentPerId == \A r \in Orders : shipments[r] &lt;= 1
+=======================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS InitialStock = 1
+          NewIdOnRetry = FALSE
+          ConsumerDedup = TRUE
+INVARIANT TypeOK
+INVARIANT OneChargePerId
+INVARIANT OneChargePerCheckout
+INVARIANT StockConserved
+INVARIANT ShipOnlyCommitted
+INVARIANT OneShipmentPerId
+CHECK_DEADLOCK FALSE</code></pre>
+<p>This passes with 4 distinct states and 4 generated. That is correct, not suspicious: with a stable ID, <code>Retry</code> is never enabled, because resending r42 changes nothing, so the behavior is one line of Reserve, Pay, Consume. The contract from {{lesson:idempotency}} turned retries into stuttering. Now break it.</p>
+<div class="table-wrap"><table><thead><tr><th>Constants</th><th>Invariants checked</th><th>TLC result</th></tr></thead><tbody>
+<tr><td>Stock 2, new ID</td><td><code>OneChargePerCheckout</code></td><td>Violated, 6-state trace</td></tr>
+<tr><td>Stock 2, new ID</td><td>The other four</td><td>Pass: 20 distinct states, 32 generated</td></tr>
+<tr><td>Stock 1, new ID</td><td><code>OneChargePerCheckout</code></td><td>Passes: 17 distinct states, 24 generated</td></tr>
+<tr><td>Stock 1, no consumer dedup</td><td><code>OneShipmentPerId</code></td><td>Violated, 5-state trace</td></tr>
+<tr><td>Stock 1, no consumer dedup</td><td>The other four</td><td>Pass: 5 distinct states, 5 generated</td></tr>
+</tbody></table></div>
+<!--fig:newid-->
+<p>Read the bottom two rows of the grid. Each ID is charged once, so per-ID idempotency passes, and the buyer has paid twice. The model needs an explicit boundary for “same logical checkout” if that is the product requirement. Conversely, blindly reusing an ID after changing the amount is also wrong; add the arguments to the model and require each attempt to match the original request.</p>
+<details class="answer"><summary>Predict: with one camera in stock and a new ID on retry, <code>OneChargePerCheckout</code> passes. Is the design fine?</summary><p>No. It passes because the second order finds no stock and takes <code>SoldOut</code>, so one order commits while the other aborts. The buyer can be charged and also told “sold out.” The invariant held by accident of a constant. Raising the stock to 2 exposes the double charge, which is why you vary constants and keep the reason for each result.</p></details>
+<p>These checks are independent. <code>OneChargePerId</code> can hold while a shipment repeats. <code>StockConserved</code> can hold while the buyer pays twice. Choose representations that can express each failure: <code>shipments</code> is a count because a set of shipped IDs would collapse duplicates and hide this bug.</p>
+<h2>Attack three seams</h2>
+<p><strong>Trace A</strong> is the retry above: can the second region identify the original decision? <strong>Trace B</strong> asks where a delayed worker from an old epoch is rejected.</p>
+<!--fig:stale-->
+<p><strong>Trace C</strong> asks whether a retry can repeat an external effect after the consumer crashes before recording completion.</p>
+<!--fig:ship-->
+<details class="answer"><summary>Reveal a starting answer to Trace C</summary><p>If the effect and completion record are independent, a duplicate is possible, as TLC’s trace shows. Put them in one durable atomic boundary when feasible. If the effect is external, use the external system’s identity or transaction contract, or design a compensating workflow with explicitly weaker semantics. Calling delivery “exactly once” does not supply the missing boundary.</p></details>
+<div class="quiz" data-answer="1" data-explain="Each ID has one charge, so the per-ID invariant holds. The double charge is visible only to a property about the logical checkout."><fieldset><legend>The browser mints a new ID on retry, with stock 2. Which invariant catches the double charge?</legend><label><input type="radio" name="q-capstone" value="0">OneChargePerId</label><label><input type="radio" name="q-capstone" value="1">OneChargePerCheckout</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<p>Extend the model one failure at a time. Add a second buyer, then let both reserve against stale stock during a migration to test the authority handoff. Split <code>Pay</code> into a charge and a decision, and find what the provider must promise. These are different counterexamples; one giant run without separate properties makes them hard to interpret.</p>
+<details class="answer"><summary>Transfer exercise: where can a refund fit when reservation succeeds but payment is uncertain?</summary><p>Do not equate “no response” with “no charge.” Model the provider outcome as unknown until reconciled using the original request ID. If the workflow uses compensation, specify a durable refund identity and allowed states such as charged, refund-pending, refunded. Compensation is another operation with failure and retry semantics, not an eraser that makes an earlier charge never have happened.</p></details>
+<h2>Your reviewable result</h2>
+<p>Produce the state definitions, every atomic boundary, complete actions with frames, safety properties, liveness assumptions, small constants, saved counterexamples, and the mapping to the abstract ledger. Explain each reduction and each layer still treated as an assumption. A capstone succeeds when another person can reproduce the experiment and identify exactly what it establishes.</p>
+<details class="answer"><summary>Self-review rubric</summary><p>Can you reproduce a broken trace before its fix? Is each acknowledged outcome tied to durable evidence? Can an old authority still perform an effect? Do deduplication records survive the relevant crashes? Are cross-shard intermediate amounts accounted for? Can every component assumption be justified by another component or a deployment condition? Are progress claims impossible under any admitted permanent failure? Unanswered questions are the next modeling tasks.</p></details>
+<p class="resources">Use the <a target="_blank" rel="noopener noreferrer" href="https://github.com/tlaplus/Examples">official example library</a> for algorithm-scale precedents and <a target="_blank" rel="noopener noreferrer" href="https://raft.github.io/raft.pdf">Raft</a> for a concrete replication protocol.</p>

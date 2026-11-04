@@ -1,0 +1,8 @@
+import sys,os; sys.path.insert(0,os.path.join(os.path.dirname(__file__),".."))
+from dg import graph,sequence,lanes,regions
+pn={"t":(88,130,"Your module\nName.tla","accent"),"c":(480,36,"Model: Init, Next,\nwhat to check","accent"),"p":(280,130,"Parser"),"tl":(480,130,"TLC"),"pe":(280,230,"syntax error\nat a position","bad"),"te":(480,230,"error with a\nbehavior","bad"),"ok":(640,130,"no error\nN states","good")}
+pipe=graph(pn,[("t","p"),("c","tl","",{}),("p","tl","parses"),("p","pe"),("tl","te"),("tl","ok")],"Pipeline: the module goes to the parser; if it parses, TLC reads it and the model. The parser can report a syntax error. TLC can report an error with a behavior, or no error and a state count.",width=710,height=276)
+hn={"q":(90,120,"What do you\nneed?","accent"),"a":(340,36,"Operator or syntax\nreminder"),"b":(340,120,"Install or tool\nproblem"),"c":(340,204,"Language in depth"),"a2":(590,36,"Summary of TLA+","good"),"b2":(590,120,"If Something Goes\nWrong, then the group","good"),"c2":(590,204,"Specifying Systems","good")}
+help=graph(hn,[("q","a"),("q","b"),("q","c"),("a","a2"),("b","b2"),("c","c2")],"Where to look: a syntax reminder goes to the Summary of TLA+, an install or tool problem goes to the If Something Goes Wrong section then the Google group, and language depth goes to the book Specifying Systems.",width=710,height=246)
+FIGS={"pipeline":(pipe,"Whichever editor you use, the path is the same. A parse error means TLC never ran, so it tells you nothing about behavior. A TLC error comes with the behavior that led to it."),
+"help":(help,"Three questions and where each one goes. All three start from the TLA+ home page.")}

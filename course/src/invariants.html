@@ -1,0 +1,56 @@
+<h1>Find the fact that makes the guarantee inevitable.</h1>
+<p class="lead">Since {{lesson:tcommit}} you have used invariants like <code>TCConsistent</code>, and TLC checks them by visiting every reachable state. Now ask a stronger question: why does the invariant hold? The answer is usually a larger fact, one that holds even in states no behavior reaches.</p>
+<!--fig:regions-->
+<p>An invariant holds in all reachable states. An <strong>inductive invariant</strong> Inv also survives every <code>Next</code> step from <em>any</em> state satisfying it, including states <code>Init</code> never reaches. In the diagram, Inv is the blue box: no arrow leaves it. That is the condition that replaces walking an unbounded graph with one local argument. There are three obligations:</p>
+<pre><code>\* Proof obligations, not a standalone module:
+Init =&gt; Inv
+Inv /\ [Next]_vars =&gt; Inv'
+Inv =&gt; Safety</code></pre>
+<p>First establish Inv initially. Then show every allowed step preserves it. Finally show it implies what you wanted. For a state predicate, stuttering preserves truth automatically, so the middle line is often written with <code>Next</code> alone.</p>
+<details class="answer"><summary>Exercise: what if Inv is so strong that Init does not imply it?</summary><p>It cannot establish the intended theorem. A preservation argument about an unreachable region says nothing about your actual initial states. Check the base case before the step case.</p></details>
+<h2>Worked example: money in transit</h2>
+<p>An app moves one unit from Alice to Bob through a worker. <code>Debit</code> and <code>Credit</code> are separate actions, as the steps in {{lesson:inventory}} were.</p>
+<pre><code>---------------- MODULE Transfer ----------------
+EXTENDS Naturals
+VARIABLES alice, transit, bob
+vars == &lt;&lt;alice, transit, bob&gt;&gt;
+Init == alice = 2 /\ transit = 0 /\ bob = 0
+Debit == /\ alice = 2           \* one transfer only
+         /\ alice' = alice - 1
+         /\ transit' = transit + 1
+         /\ UNCHANGED bob
+Credit == /\ transit &gt; 0
+          /\ transit' = transit - 1
+          /\ bob' = bob + 1
+          /\ UNCHANGED alice
+Next == Debit \/ Credit
+Spec == Init /\ [][Next]_vars
+TypeOK == /\ alice \in 0..2
+          /\ transit \in 0..2
+          /\ bob \in 0..2
+Naive == alice + bob = 2
+BobAtMostOne == bob &lt;= 1
+Inv == TypeOK /\ alice + transit + bob = 2
+\* Start TLC from every state a candidate allows:
+IndCandidate == TypeOK /\ BobAtMostOne
+=================================================</code></pre>
+<!--fig:run-->
+<p>The natural first guess fails: TLC reports <code>Naive</code> (<code>alice + bob = 2</code>) violated after one step. The money is not lost, it is just somewhere your invariant was not looking. <code>Inv</code> counts the third place and holds, and the normal check visits only the 3 states in the green box.</p>
+<h2>Asking TLC whether a fact is inductive</h2>
+<p>TLC can test preservation directly on a finite type. Replace the initial predicate with the candidate, so it starts from every state the candidate allows.</p>
+<pre><code>INIT Inv
+NEXT Next
+INVARIANT Inv
+CHECK_DEADLOCK FALSE</code></pre>
+<p>This run starts from all 6 states in the blue box, and TLC reports no error, so <code>Inv</code> is inductive on this finite set of values. Now try <code>BobAtMostOne</code>. It holds in all 3 reachable states, so as an invariant it passes. Starting from <code>TypeOK /\ BobAtMostOne</code> instead, TLC finds the dashed arrow: from alice = 0, transit = 1, bob = 1, <code>Credit</code> gives bob = 2.</p>
+<p>A counterexample like that one is called a counterexample to induction. It does not mean the system has a bug, because that start state is unreachable. It means your fact is too weak to explain itself, and you must strengthen it or give it up.</p>
+<details class="answer"><summary>Predict: mutate Credit so it raises bob without lowering transit. And Debit so it lowers alice without raising transit. Does Inv catch both?</summary><p>Yes, and differently. TLC’s trace for the bad Credit has total 3, after two steps; for the bad Debit it has total 1, after one. These are different bugs caught by one conservation equation. With several transfers, identify them separately: one scalar <code>transit</code> cannot tell you that one transfer was credited twice and another never.</p></details>
+<p>Hand-check the argument too. <code>Init</code> gives 2 + 0 + 0 = 2. In <code>Debit</code>, subtracting and adding one cancel. In <code>Credit</code>, the guard <code>transit &gt; 0</code> keeps the result in type, and they cancel again. Each action moves a unit’s location and keeps the total.</p>
+<h2>Back to the ticket</h2>
+<p><code>NoOverselling</code> from {{lesson:inventory}} looks like the property you want, and it is true. Is it inductive? Start TLC from all states satisfying <code>TypeOK /\ NoOverselling</code>, and it reports a violation from <code>remaining = 1, booked = {B}</code>, then <code>Reserve(A)</code>.</p>
+<!--fig:cti-->
+<p>The red edges start where stock and bookings disagree. The missing fact relates the two variables: <code>Conservation</code>, <code>remaining + Cardinality(booked) = 1</code>. Start from <code>TypeOK /\ Conservation</code> and TLC finds 3 states and no error. Because <code>remaining</code> is at least 0, Conservation also implies at most one booking. Relational facts like this one usually do more work than bounding each variable alone.</p>
+<div class="callout"><p>This check covers only the values you gave TLC. It can refute a candidate quickly, and a pass is good evidence, but it is not a theorem for all values. {{lesson:proofs}} builds the proof itself.</p></div>
+<details class="answer"><summary>Predict: does this conservation proof establish that Bob eventually receives the money?</summary><p>No. The behavior may stay at alice = 1, transit = 1, bob = 0 forever. <code>Credit</code> is possible but not required. Safety says where the money is; reaching the destination needs the fairness of {{lesson:fairness}}.</p></details>
+<div class="quiz" data-answer="1" data-explain="Inductive means no allowed step leaves the set, starting from any state in it. BobAtMostOne is an example that holds on reachable states and still fails this test."><fieldset><legend>Which is true of every inductive invariant that Init implies?</legend><label><input type="radio" name="q-invariants" value="0">It describes exactly the reachable states</label><label><input type="radio" name="q-invariants" value="1">It holds in every reachable state, and may also allow unreachable ones</label><label><input type="radio" name="q-invariants" value="2">It is the same as any true invariant</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<p class="resources"><a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/tla/inductive-invariant.pdf">Using TLC to Check Inductive Invariance</a> explains how finite checks can help develop candidate invariants.</p>

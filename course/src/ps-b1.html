@@ -1,0 +1,350 @@
+<h1>Problem set 11: decide where one step ends.</h1>
+<p class="lead">Four concurrency problems. In each one the bug or the fix is a step boundary: a statement that is or isn't atomic, a check separated from its write, a counter published before its data, a lock that expires. You'll write PlusCal, read traces by their <code>pc</code> values, state a queue contract as a refinement, and ask the fairness questions of lecture 9 about a lock.</p>
+<p>PlusCal modules are shown as you write them, before translation. Translate each one with <code>java -cp tla2tools.jar pcal.trans -nocfg File.tla</code> or your editor's command, then run TLC. Every count below is from the translated module, run exactly as shown.</p>
+
+<article class="problem" id="ps-b1-refund">
+<p class="problem-meta"><span>Problem 1</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">Databases</span></p>
+<h2>Two refunds, one lost</h2>
+<p class="uses">Draws on {{ref:pluscal}}, {{ref:inventory}} and {{ref:program}}.</p>
+<p>A payments service credits refunds to a wallet stored in Postgres. The handler reads the balance, adds the refund in application code, and writes the result back:</p>
+<pre><code>SELECT balance FROM accounts WHERE id = 1;          -- returns 100
+UPDATE accounts SET balance = 110 WHERE id = 1;     -- 100 + 10, computed in the app</code></pre>
+<p>A customer returns two items and gets two refunds of 10, handled by two requests at the same moment. Support finds the wallet at 110 instead of 120. Each SQL statement is atomic on its own, so each becomes one labeled step, and the value carried between them becomes a process variable:</p>
+<pre><code>---------------- MODULE PSb1_Wallet ----------------
+EXTENDS Naturals, FiniteSets
+CONSTANT Clients
+(*--algorithm Wallet
+variables balance = 100;
+define
+    AllDone == \A c \in Clients : pc[c] = "Done"
+    NoLostUpdate == AllDone =&gt; balance = 100 + 10 * Cardinality(Clients)
+end define;
+process Refund \in Clients
+variable local = 0;
+begin
+Select:  \* SELECT balance FROM accounts WHERE id = 1
+    local := balance;
+Update:  \* UPDATE accounts SET balance = $1 WHERE id = 1, with $1 = local + 10
+    balance := local + 10;
+end process;
+end algorithm; *)
+====================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANT Clients = {A, B}
+INVARIANT NoLostUpdate</code></pre>
+<ol class="tasks">
+<li>Translate and run it. Write down TLC's trace as a list of steps, and say at which step the refund was lost.</li>
+<li>Replace the two statements by one, <code>UPDATE accounts SET balance = balance + 10 WHERE id = 1</code>. Write it as one label and check it. Why is one label an honest model of that statement in Postgres?</li>
+<li>Keep two statements, but read with <code>SELECT balance FROM accounts WHERE id = 1 FOR UPDATE</code>, which locks the row until the transaction ends. Model the row lock with a variable <code>holder</code> and a <code>Commit</code> label that releases it. Check it with two clients and with three.</li>
+</ol>
+<!--fig:lost-->
+<div class="numcheck" data-answer="110" data-explain="Both clients read 100, then each writes 100 + 10. The second write replaces the first with the same value, so one refund disappears." data-retry="What does each client hold in local when it writes?"><label>Final balance in TLC's trace for the first module <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="The plain SELECT reads before the lock is held, so both clients can read 100 and then take the lock one after the other, each writing 110. TLC reports NoLostUpdate violated for this order. Taking the lock before reading is what makes the read current."><fieldset><legend>A teammate keeps a plain <code>SELECT</code> to read the balance, then runs <code>SELECT … FOR UPDATE</code> just before the <code>UPDATE</code>, still writing the value from the first read. Does that fix the lost refund?</legend><label><input type="radio" name="q-ps-b1-refund" value="0">Yes, the lock is held during the write</label><label><input type="radio" name="q-ps-b1-refund" value="1">No, the value written was read before the lock was taken</label><label><input type="radio" name="q-ps-b1-refund" value="2">Only with three clients</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>For (c), put <code>await holder = "none"</code>, <code>holder := self</code> and the read under one label, since <code>SELECT … FOR UPDATE</code> both waits for the lock and returns the row. A label starts a new atomic step, as in {{lesson:pluscal}}, so the waiting, locking and reading must not be split.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p>(a) TLC reports <code>NoLostUpdate</code> violated after five states, shown in the figure: <code>Select(A)</code>, <code>Select(B)</code>, <code>Update(A)</code>, <code>Update(B)</code>. The refund is lost at the second <code>Select</code>, when B reads a balance that A is about to change. The write that makes it visible comes two steps later. This is the {{lesson:pluscal}} <code>LostUpdate</code> race, with SQL statements as the steps. Without the invariant, the full graph has 13 distinct states.</p>
+<p>(b) One label:</p>
+<pre><code>---------------- MODULE PSb1_WalletAtomic ----------------
+EXTENDS Naturals, FiniteSets
+CONSTANT Clients
+(*--algorithm WalletAtomic
+variables balance = 100;
+define
+    AllDone == \A c \in Clients : pc[c] = "Done"
+    NoLostUpdate == AllDone =&gt; balance = 100 + 10 * Cardinality(Clients)
+end define;
+process Refund \in Clients
+begin
+Update:  \* UPDATE accounts SET balance = balance + 10 WHERE id = 1
+    balance := balance + 10;
+end process;
+end algorithm; *)
+==========================================================</code></pre>
+<p>TLC finds 4 distinct states and no error. One label is honest because of what Postgres does with that statement. An <code>UPDATE</code> locks the row it changes. Under the default isolation level, <code>READ COMMITTED</code>, a second <code>UPDATE</code> of the same row waits for the first transaction to finish, then re-evaluates its <code>WHERE</code> clause on the new row version and computes <code>balance + 10</code> from it. So no other write can come between reading and writing the balance. The label is a claim about the database; it is only true because the database makes it true.</p>
+<p>(c) With the row lock:</p>
+<pre><code>---------------- MODULE PSb1_WalletLock ----------------
+EXTENDS Naturals, FiniteSets
+CONSTANT Clients
+(*--algorithm WalletLock
+variables balance = 100, holder = "none";
+define
+    AllDone == \A c \in Clients : pc[c] = "Done"
+    NoLostUpdate == AllDone =&gt; balance = 100 + 10 * Cardinality(Clients)
+end define;
+process Refund \in Clients
+variable local = 0;
+begin
+Select:  \* SELECT balance FROM accounts WHERE id = 1 FOR UPDATE
+    await holder = "none";
+    holder := self;
+    local := balance;
+Update:  \* UPDATE accounts SET balance = $1 WHERE id = 1
+    balance := local + 10;
+Commit:  \* COMMIT releases the row lock
+    holder := "none";
+end process;
+end algorithm; *)
+========================================================</code></pre>
+<p>TLC finds no error: 13 distinct states with two clients, 46 with three (<code>Clients = {A, B, C}</code>). The lock makes <code>Select</code> wait while another client is between its read and its commit, so every read sees the latest committed balance. Note what the model assumes: every writer of this row uses <code>FOR UPDATE</code>. A plain <code>SELECT</code> doesn't take the lock and isn't blocked by it, which is why the quiz's version still fails (module <code>PSb1_WalletLockLate</code>, violation found).</p>
+</details>
+</article>
+
+<article class="problem" id="ps-b1-seat">
+<p class="problem-meta"><span>Problem 2</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Databases</span></p>
+<h2>Two passengers in seat 14C</h2>
+<p class="uses">Draws on {{ref:inventory}}, {{ref:pluscal}} and {{ref:tcommit}}.</p>
+<p>An airline's seat picker checks whether a seat is free and then inserts a booking. Two passengers, Ada and Ben, click 14C at the same moment, and both boarding passes say 14C. The team's first answer is a unique constraint on the seat column: the database rejects a second row for 14C, whatever the application does. This problem checks that fix, and then the code around it.</p>
+<pre><code>---------------- MODULE PSb1_Seat ----------------
+EXTENDS Naturals, FiniteSets
+CONSTANT Users
+(*--algorithm Seat
+variables bookings = {}, told = [u \in Users |-&gt; "waiting"];
+define
+    OneBooking == Cardinality(bookings) &lt;= 1
+    Honest == \A u \in Users : told[u] = "confirmed" =&gt; u \in bookings
+end define;
+process User \in Users
+variables free = FALSE, inserted = FALSE;
+begin
+Check:   \* SELECT 1 FROM bookings WHERE seat = '14C'
+    free := (bookings = {});
+Insert:  \* INSERT INTO bookings (seat, user_id) VALUES ('14C', ...)
+    if free then
+        bookings := bookings \cup {self};
+        inserted := TRUE;
+    end if;
+Reply:   \* the page the user sees
+    told[self] := IF inserted THEN "confirmed" ELSE "taken";
+end process;
+end algorithm; *)
+==================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANT Users = {A, B}
+INVARIANT OneBooking Honest</code></pre>
+<p><code>told</code> is what each passenger's page says. <code>Honest</code> says no page claims a booking the database doesn't have.</p>
+<ol class="tasks">
+<li>Run it and give TLC's trace in terms of the labels.</li>
+<li>Model the unique constraint: the <code>Insert</code> step adds the row only if no row for 14C exists, and otherwise does nothing, leaving <code>inserted</code> false. (In Postgres the insert fails with a unique-violation error, which the application catches.) Check it.</li>
+<li>A teammate writes the reply as <code>told[self] := IF free THEN "confirmed" ELSE "taken"</code>, since "we already checked the seat was free". Which invariant fails, and what does Ben see?</li>
+<li>With the constraint in place, delete the <code>Check</code> label and the <code>free</code> variable entirely. Does anything fail? What was the check for?</li>
+</ol>
+<!--fig:seat-->
+<div class="numcheck" data-answer="32|thirty two|thirty-two" data-explain="TLC's run of the module with the unique constraint reports 47 states generated and 32 distinct states, with OneBooking and Honest holding." data-retry="Check the version with the constraint in Insert and the reply based on inserted."><label>Distinct states TLC finds for your fixed module from task (b) <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="2" data-explain="The constraint keeps the data right, so OneBooking holds. But Ben's reply uses the stale check, so his page says confirmed while the only row is Ada's: Honest fails."><fieldset><legend>Which invariant fails for the teammate's reply in task (c)?</legend><label><input type="radio" name="q-ps-b1-seat" value="0">Both</label><label><input type="radio" name="q-ps-b1-seat" value="1"><code>OneBooking</code> only</label><label><input type="radio" name="q-ps-b1-seat" value="2"><code>Honest</code> only</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>The constraint makes the test and the insert one indivisible decision, like moving <code>remaining &gt; 0</code> into <code>Reserve</code> in {{lesson:inventory}}. So the test belongs inside the <code>Insert</code> label. For (c), ask which value Ben's process holds in <code>free</code> when it replies.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p>(a) TLC reports <code>OneBooking</code> violated after five states: <code>Check(A)</code> and <code>Check(B)</code> both set <code>free</code> to <code>TRUE</code>, then <code>Insert(A)</code> and <code>Insert(B)</code> both add a row, leaving <code>bookings = {A, B}</code>. It is the split check and reserve from {{lesson:inventory}}.</p>
+<p>(b) With the constraint:</p>
+<pre><code>---------------- MODULE PSb1_SeatUnique ----------------
+EXTENDS Naturals, FiniteSets
+CONSTANT Users
+(*--algorithm SeatUnique
+variables bookings = {}, told = [u \in Users |-&gt; "waiting"];
+define
+    OneBooking == Cardinality(bookings) &lt;= 1
+    Honest == \A u \in Users : told[u] = "confirmed" =&gt; u \in bookings
+end define;
+process User \in Users
+variables free = FALSE, inserted = FALSE;
+begin
+Check:
+    free := (bookings = {});
+Insert:  \* UNIQUE (seat): the INSERT fails if a row for 14C exists
+    if free then
+        if bookings = {} then
+            bookings := bookings \cup {self};
+            inserted := TRUE;
+        end if;
+    end if;
+Reply:
+    told[self] := IF inserted THEN "confirmed" ELSE "taken";
+end process;
+end algorithm; *)
+========================================================</code></pre>
+<p>TLC finds 32 distinct states and no error. The inner test sits in the same label as the insert, because the database performs it atomically with the insert.</p>
+<p>(c) <code>Honest</code> fails; <code>OneBooking</code> still holds. TLC's trace, shown in the figure: both check, Ada inserts, Ben's insert is rejected so his <code>inserted</code> stays false, and <code>Reply(B)</code> sets <code>told[B]</code> to <code>"confirmed"</code> while <code>bookings = {A}</code>. Ben sees a confirmation and arrives at a seat that is Ada's. The constraint protected the data, not the page. The reply must be based on the result of the step that decides, the insert, never on the check.</p>
+<p>(d) Nothing fails (module <code>PSb1_SeatNoCheck</code>: 13 distinct states, both invariants hold):</p>
+<pre><code>---------------- MODULE PSb1_SeatNoCheck ----------------
+EXTENDS Naturals, FiniteSets
+CONSTANT Users
+(*--algorithm SeatNoCheck
+variables bookings = {}, told = [u \in Users |-&gt; "waiting"];
+define
+    OneBooking == Cardinality(bookings) &lt;= 1
+    Honest == \A u \in Users : told[u] = "confirmed" =&gt; u \in bookings
+end define;
+process User \in Users
+variables inserted = FALSE;
+begin
+Insert:  \* INSERT ... ; the unique constraint rejects a second row
+    if bookings = {} then
+        bookings := bookings \cup {self};
+        inserted := TRUE;
+    end if;
+Reply:
+    told[self] := IF inserted THEN "confirmed" ELSE "taken";
+end process;
+end algorithm; *)
+=========================================================</code></pre>
+<p>Once the insert decides, the check decides nothing. It is still useful for the interface, for example to grey out seats that are already taken, but it is a hint. Postgres also offers <code>INSERT … ON CONFLICT DO NOTHING</code>, which reports zero rows inserted instead of raising an error; either way, the application has to read that result.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-b1-ring">
+<p class="problem-meta"><span>Problem 3</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Algorithms</span></p>
+<h2>A lock-free ring buffer refines a bounded queue</h2>
+<p class="uses">Draws on {{ref:fifo}}, {{ref:pluscal}}, {{ref:refinement}} and {{ref:mutex}}.</p>
+<p>A logging agent hands records from one producer thread to one consumer thread through a ring buffer: an array of N slots and two counters. <code>tail</code> counts records written and <code>head</code> counts records read, so <code>tail - head</code> records are waiting, and record number i lives in slot <code>i % N</code>. (<code>a % b</code> is the remainder, defined in <code>Naturals</code>.) There is no lock. Only the producer changes <code>tail</code> and only the consumer changes <code>head</code>. When the buffer is full the producer waits, which is the backpressure. The contract is the bounded FIFO queue of {{lesson:fifo}}, written here as its own module:</p>
+<pre><code>---------------- MODULE PSb1_Queue ----------------
+EXTENDS Naturals, Sequences
+CONSTANTS Values, Capacity
+VARIABLE q
+Init == q = &lt;&lt;&gt;&gt;
+Enqueue(v) == /\ Len(q) &lt; Capacity
+              /\ q' = Append(q, v)
+Dequeue == /\ Len(q) &gt; 0
+           /\ q' = Tail(q)
+Next == (\E v \in Values : Enqueue(v)) \/ Dequeue
+Spec == Init /\ [][Next]_q
+===================================================</code></pre>
+<p>The producer sends 1, 2, …, K, so <code>InOrder</code> can check the order by value. The lines after the algorithm map the slots to the abstract queue.</p>
+<pre><code>---------------- MODULE PSb1_Ring ----------------
+EXTENDS Naturals, Sequences
+CONSTANTS N, K      \* N slots; the producer sends 1, 2, ..., K
+(*--algorithm Ring
+variables buf = [i \in 0..(N - 1) |-&gt; 0], head = 0, tail = 0, got = &lt;&lt;&gt;&gt;;
+define
+    InOrder == \A i \in 1..Len(got) : got[i] = i
+end define;
+process Producer = "prod"
+variable next = 1;
+begin
+P1: while next &lt;= K do
+P2:   await tail - head &lt; N;        \* full: wait (backpressure)
+      buf[tail % N] := next;        \* write the slot
+P3:   tail := tail + 1;             \* publish it
+      next := next + 1;
+    end while;
+end process;
+process Consumer = "cons"
+begin
+C1: while Len(got) &lt; K do
+C2:   await tail &gt; head;            \* empty: wait
+      got := Append(got, buf[head % N]);
+C3:   head := head + 1;             \* free the slot
+    end while;
+end process;
+end algorithm; *)
+\* Refinement: the occupied slots, oldest first, are the abstract queue.
+Queued == [i \in 1..(tail - head) |-&gt; buf[(head + i - 1) % N]]
+Q == INSTANCE PSb1_Queue WITH Values &lt;- 1..K, Capacity &lt;- N, q &lt;- Queued
+QueueSpec == Q!Spec
+==================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS N = 2
+          K = 3
+INVARIANT InOrder
+PROPERTY QueueSpec</code></pre>
+<ol class="tasks">
+<li>Translate and run it. Which labeled steps map to <code>Enqueue</code>, which to <code>Dequeue</code>, and which to stuttering?</li>
+<li>Change the full test to <code>await tail - head &lt;= N</code>. Run it with both checks, then with only <code>INVARIANT InOrder</code>. Which check fails first, and why earlier?</li>
+<li>Restore the test, and make the producer publish before writing: <code>tail := tail + 1</code> under <code>P2</code>, then <code>buf[(tail - 1) % N] := next</code> under <code>P3</code>. What does each check report?</li>
+<li>Each label is atomic, and the labels of one process run in order. Which of these assumptions does a real CPU not give you for free?</li>
+</ol>
+<!--fig:ring-->
+<div class="numcheck" data-answer="58|fifty eight|fifty-eight" data-explain="TLC's run of the translated module with N = 2 and K = 3 reports 96 states generated and 58 distinct states, with no error." data-retry="Use the module and cfg exactly as given."><label>Distinct states TLC finds for the correct ring buffer <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="0" data-explain="The publish step makes the mapped queue ⟨0⟩, and 0 is not in Values = 1..K, so no Enqueue step allows it. The refinement fails in state 3, before any read; InOrder fails only when the consumer reads the 0, in state 5."><fieldset><legend>In task (c), which check fails first?</legend><label><input type="radio" name="q-ps-b1-ring" value="0">The refinement property <code>QueueSpec</code></label><label><input type="radio" name="q-ps-b1-ring" value="1"><code>InOrder</code></label><label><input type="radio" name="q-ps-b1-ring" value="2">Neither: the consumer always reads after the write</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>The mapped queue only covers slots from <code>head</code> to <code>tail - 1</code>. Writing to slot <code>tail % N</code> is outside that range, unless the buffer is already full. For (d), think about what another core sees when one core writes <code>buf</code> and then <code>tail</code>.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p>(a) TLC finds no error: 96 states generated, 58 distinct. <code>P3</code> (raise <code>tail</code>) maps to <code>Enqueue(next)</code>, since the slot it exposes already holds <code>next</code>. <code>C3</code> (raise <code>head</code>) maps to <code>Dequeue</code>. <code>P2</code> writes a slot outside the occupied range, and <code>C2</code> only copies the head into <code>got</code>, so they map to stuttering, as do the loop tests <code>P1</code> and <code>C1</code>. This mapping is the one {{lesson:fifo}} hinted at: <code>InOrder</code> related the queue to an observer's history, and <code>Queued</code> says which part of the array <em>is</em> the queue.</p>
+<p>(b) With both checks, TLC reports the action property of <code>PSb1_Queue</code> violated after nine states: the producer publishes 1 and 2, then, with two records unread, its <code>P2</code> writes 3 into slot 0. The mapped queue goes from ⟨1, 2⟩ to ⟨3, 2⟩, which no queue step does. With <code>InOrder</code> alone, the trace has eleven states and ends with the consumer receiving 3 first, as in the figure. The refinement check sees the damage when it happens; the invariant sees it only when someone reads the result.</p>
+<p>(c) The refinement check fails after three states: <code>P1</code>, then the early <code>P2</code> makes <code>tail = 1</code> while slot 0 still holds 0, so the mapped queue is ⟨0⟩. With <code>InOrder</code> alone, TLC needs five states: the consumer reads slot 0 before the producer writes it, and <code>got = &lt;&lt;0&gt;&gt;</code>. The order of the write and the publish is the whole algorithm.</p>
+<p>(d) The model assumes each process's steps happen in program order as seen by the other process. Compilers and CPUs may reorder the writes to <code>buf</code> and <code>tail</code>, which turns the correct code into the bug in (c). Real ring buffers publish <code>tail</code> with a release store and read it with an acquire load, or use a language's atomic types, so that the order the model assumes is the order other threads see. The label structure is your statement of which orderings the code must guarantee.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-b1-redislock">
+<p class="problem-meta"><span>Problem 4</span><span class="level" title="Difficulty 3 of 3">●●●</span><span class="domain">Distributed systems</span></p>
+<h2>Guard the wallet with a Redis lock</h2>
+<p class="uses">Draws on {{ref:mutex}}, {{ref:pluscal}}, {{ref:fairness}}, Problem 1 of this set and {{ref:ps-l9}}.</p>
+<p>Return to the wallet of Problem 1, but now it lives in a document store with no row locks, and workers on several servers apply refunds to it. The team guards the read-modify-write with a lock in Redis. A worker runs <code>SET wallet:7:lock &lt;worker id&gt; NX</code>, which sets the key only if it doesn't exist, retrying until it succeeds, and later deletes the key. <code>committed</code> counts writes, only so the invariant can say what the balance should be.</p>
+<pre><code>---------------- MODULE PSb1_RedisLock ----------------
+EXTENDS Naturals, FiniteSets
+CONSTANT Workers
+(*--algorithm RedisLock
+variables balance = 100, lock = "none", committed = 0;
+define
+    NoLostUpdate == balance = 100 + 10 * committed
+    Holding == {w \in Workers : pc[w] \in {"Read", "Write", "Release"}}
+    MutualExclusion == Cardinality(Holding) &lt;= 1
+end define;
+fair process Worker \in Workers
+variable local = 0;
+begin
+Acquire:  \* SET wallet:7:lock &lt;worker id&gt; NX
+    await lock = "none";
+    lock := self;
+Read:
+    local := balance;
+Write:
+    balance := local + 10;
+    committed := committed + 1;   \* bookkeeping for the check only
+Release:  \* DEL wallet:7:lock
+    lock := "none";
+end process;
+end algorithm; *)
+=======================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANT Workers = {A, B}
+INVARIANT NoLostUpdate MutualExclusion
+PROPERTY Termination</code></pre>
+<ol class="tasks">
+<li>Run it. Then let a worker crash at <code>Release</code>: <code>either lock := "none"; or skip; end either;</code>. What does TLC report, and why isn't it a liveness violation?</li>
+<li>Locks that outlive their owner are why Redis locks get an expiry: <code>SET … NX PX 10000</code> deletes the key after 10 seconds. Drop the crash, and add a process that can expire the lock whenever it is held. Check <code>MutualExclusion</code>, then only <code>NoLostUpdate</code>. Can any fairness assumption remove the violation?</li>
+<li>The workers become a background loop: acquire, work, release, forever. In the module below, check <code>NoStarvation</code> with <code>Spec</code>, then with <code>SpecSF</code>. Explain TLC's counterexample, and say what a real lock would need to justify <code>SpecSF</code>.</li>
+</ol>
+<pre><code>---------------- MODULE PSb1_RedisLockLoop ----------------
+CONSTANT Workers
+(*--algorithm RedisLockLoop
+variable lock = "none";
+define
+    NoStarvation == \A w \in Workers :
+                      (pc[w] = "Acquire") ~&gt; (pc[w] = "Work")
+end define;
+fair process Worker \in Workers
+begin
+Loop:
+    while TRUE do
+Acquire:  \* SET wallet:7:lock &lt;worker id&gt; NX, retried until it succeeds
+        await lock = "none";
+        lock := self;
+Work:
+        skip;               \* read and write the balance
+Release:
+        lock := "none";
+    end while;
+end process;
+end algorithm; *)
+\* Strong fairness for each worker's Acquire, on top of fair process.
+SpecSF == Spec /\ \A w \in Workers : SF_vars(Acquire(w))
+===========================================================</code></pre>
+<!--fig:starve-->
+<div class="numcheck" data-answer="17|seventeen" data-explain="TLC's run of the translated module with Workers = {A, B} reports 19 states generated and 17 distinct states, with both invariants and Termination holding." data-retry="Run the first module exactly as given, with its cfg."><label>Distinct states TLC finds for the first module <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="After the crash, B waits at Acquire for a key nobody will delete, and no step of any process is enabled. TLC checks for deadlock before it checks temporal properties, so it reports Deadlock reached."><fieldset><legend>What does TLC report for the crash in task (a)?</legend><label><input type="radio" name="q-ps-b1-redislock" value="0"><code>Termination</code> violated</label><label><input type="radio" name="q-ps-b1-redislock" value="1">Deadlock reached</label><label><input type="radio" name="q-ps-b1-redislock" value="2"><code>MutualExclusion</code> violated</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>For (b), write the expiry as its own process, <code>process Expiry = "ttl"</code>, with a <code>while TRUE</code> loop that awaits a held lock and clears it. For (c), compare the four abstract lock specs in {{lesson:mutex}}: which one is <code>fair process</code> giving you here?</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p>(a) TLC finds no error: 17 distinct states, and <code>Termination</code> holds because of <code>fair process</code>. With the crash (module <code>PSb1_RedisLockCrash</code>), TLC reports <code>Deadlock reached</code> after five states: A acquires, reads, writes, and crashes at <code>Release</code> with the key still set. A is at <code>Done</code>, B waits at <code>Acquire</code> forever, and no step is enabled. That is a safety failure, a reachable state with no way out, so TLC reports it before it looks at any temporal property.</p>
+<p>(b) The expiry process (module <code>PSb1_RedisLockTTL</code>, which also drops <code>fair</code>, since this part checks only safety):</p>
+<pre><code>process Expiry = "ttl"   \* the key's PX timeout runs out
+begin
+Expire:
+    while TRUE do
+        await lock # "none";
+        lock := "none";
+    end while;
+end process;</code></pre>
+<p><code>MutualExclusion</code> fails after four states: A acquires, the lock expires, B acquires, and both are past <code>Acquire</code>. With only <code>NoLostUpdate</code>, TLC reports eight states, the lost update of Problem 1 again: A acquires, the lock expires, A reads 100, B acquires and reads 100, A writes 110, B writes 110. In production, A is a worker paused by garbage collection or a slow network after its lock expired, not a dead one, the case {{lesson:mutex}} warned about. No fairness assumption helps. Fairness only says some steps must eventually happen; it never forbids an order of steps, and this violation is a finite prefix. The fix has to be in the protocol: the store must reject a write from a worker whose lock has expired. The model also exposes a second problem: A's later <code>Release</code> deletes the key while B holds it. The Redis documentation recommends releasing with a script that deletes the key only if it still holds your own value.</p>
+<p>(c) With <code>Spec</code>, TLC reports <code>NoStarvation</code> violated, with the cycle in the figure: A waits at <code>Acquire</code> while B loops, acquires, works and releases, forever. <code>fair process</code> is weak fairness of each worker's whole step, close to the <code>SpecWF</code> row of {{lesson:mutex}}. A's <code>Acquire</code> is enabled only in the two states where the lock is free, so it is never continuously enabled, and weak fairness never forces it. With <code>SpecSF</code>, which adds strong fairness of each <code>Acquire</code>, TLC finds that <code>NoStarvation</code> holds, in the same 12 distinct states.</p>
+<p>But <code>SpecSF</code> is an assumption about the lock, not something <code>SET NX</code> provides. A retry loop gives no priority to the worker that has waited longest, and if B's retries tend to be faster, A can lose every race. To justify strong fairness, a real lock needs a queue of waiters served in order, or another mechanism that the model would then include as steps.</p>
+</details>
+</article>

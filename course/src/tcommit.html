@@ -1,0 +1,61 @@
+<h1>Say what a wedding must accomplish, and leave out the minister.</h1>
+<p class="lead">You now have the notation for talking about a set of processes. Lecture 5 uses it on a problem from databases, transaction commit, which is simple enough to specify in about twenty lines. The spec describes only the outcome that must be reached, not any protocol for reaching it.</p>
+<!--fig:rm-->
+<p>The diagram is the state machine of one participant, and it is nearly the whole problem. A participant starts out working, can prepare or abort, and from prepared can commit or abort. Committed and aborted have no outgoing arrows, so those decisions are final.</p>
+<h2>While you watch</h2>
+<p>Lamport, following Jim Gray, starts with a wedding: bride, groom, and minister. Ask yourself what the minister is for. Then follow the walk through module TCommit, whose notation you met in {{lesson:sets}}. Pause where he says to stop the video. The lecture runs TLC from the Toolbox; the same run works in the VS Code extension, the current option, and this lesson shows it as a <code>.cfg</code> file. This lesson adds a graph of every reachable state for two participants and a broken variant of the spec.</p>
+<h2>From a wedding to a transaction</h2>
+<p>At a wedding, each of two people starts unsure, and either may say no. It must end with both believing they are committed or both believing it was aborted. The minister helps make this happen, but he is part of how the wedding works, not part of what it must accomplish. So the spec leaves him out.</p>
+<p>Now allow any number of participants, and you have transaction commit. A database <strong>transaction</strong> is carried out by processes called <strong>resource managers</strong> (RMs). The unsure state is traditionally called <em>working</em>. The rules are:</p>
+<ul><li>The transaction can commit only if all RMs are prepared to commit.</li><li>It must abort if any RM wants to abort.</li><li>All RMs must agree on the result.</li></ul>
+<h2>The spec</h2>
+<pre><code>------------------------------- MODULE TCommit ------------------------------
+CONSTANT RM              \* The set of resource managers
+VARIABLE rmState         \* rmState[r] is the state of RM r
+-----------------------------------------------------------------------------
+TCTypeOK == rmState \in [RM -&gt; {"working", "prepared", "committed", "aborted"}]
+
+TCInit == rmState = [r \in RM |-&gt; "working"]
+
+canCommit == \A r \in RM : rmState[r] \in {"prepared", "committed"}
+
+notCommitted == \A r \in RM : rmState[r] # "committed"
+-----------------------------------------------------------------------------
+Prepare(r) == /\ rmState[r] = "working"
+              /\ rmState' = [rmState EXCEPT ![r] = "prepared"]
+
+Decide(r) == \/ /\ rmState[r] = "prepared"
+                /\ canCommit
+                /\ rmState' = [rmState EXCEPT ![r] = "committed"]
+             \/ /\ rmState[r] \in {"working", "prepared"}
+                /\ notCommitted
+                /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
+
+TCNext == \E r \in RM : Prepare(r) \/ Decide(r)
+-----------------------------------------------------------------------------
+TCConsistent == \A r1, r2 \in RM : ~ /\ rmState[r1] = "aborted"
+                                     /\ rmState[r2] = "committed"
+=============================================================================</code></pre>
+<p>The "TC" prefix on names such as <code>TCTypeOK</code> is there because a later module uses this one alongside its own definitions. <code>Prepare(r)</code> is the top arrow of the diagram. <code>Decide(r)</code> has two cases: the branch to committed needs <code>canCommit</code> (every RM prepared or committed), and the branch to aborted needs <code>notCommitted</code> (no RM committed). <code>TCNext</code> says some RM takes one of those steps.</p>
+<p><code>canCommit</code> and <code>notCommitted</code> are only names. You could paste their definitions into <code>Decide</code>, renaming the bound variable to <code>s</code> to avoid clashing with <code>r</code>, and the meaning would stay the same. You could also split <code>Decide</code> into two actions. There are many ways to decompose a next-state formula, and definitions are how you make it readable.</p>
+<div class="callout"><p>One <code>Decide(r)</code> step reads the state of every RM. No programming language gives you that in a single step, and it doesn't matter: this says what commit must achieve, not how. {{lesson:transactions}} covers the how.</p></div>
+<h2>Every reachable state, for two RMs</h2>
+<!--fig:pairs-->
+<p>Each box is a state of two RMs: r1's state, then r2's, abbreviated w, p, c, a. Right and left arrows are r1 moving, and up and down arrows are r2 moving. The curved arrows are a prepared RM aborting. Start at the accent box and follow the guards. The commit arrows only appear once the other RM is prepared or committed. Once one RM commits, the arrows to aborted disappear, because <code>notCommitted</code> is false. The two red boxes have no arrows into them, which is exactly what <code>TCConsistent</code> claims. TLC agrees: with two RMs it finds 12 distinct states, the 12 non-red boxes.</p>
+<h2>Check it with TLC</h2>
+<pre><code>INIT TCInit
+NEXT TCNext
+CONSTANT RM = {"r1", "r2", "r3"}
+INVARIANT TCTypeOK
+INVARIANT TCConsistent
+CHECK_DEADLOCK FALSE</code></pre>
+<p>Since the initial and next-state formulas aren't called <code>Init</code> and <code>Next</code>, you name them. A constant needs a value, and Lamport's three strings are as good as any; he'd normally start with a smaller model, but this spec is simple. A correct behavior ends when all RMs have finished, so you turn deadlock checking off.</p>
+<p>Result of this run: <strong>no error, 94 states generated, 34 distinct states</strong>.</p>
+<p>Be suspicious of success. Look at the state count: is it plausible? Look at the coverage report, which counts how often each part of the next-state formula produced a new state. A count of zero usually means an error in the spec.</p>
+<details class="answer"><summary>Predict: delete <code>notCommitted</code> from the abort branch of Decide. What does TLC find?</summary><p>It reports that <code>TCConsistent</code> is violated, with a 6-state trace. All three RMs prepare, r1 commits, and r2 then aborts. The trace is the bottom half of the next diagram.</p></details>
+<!--fig:trace-->
+<p>The top three rows are a behavior of the real spec. The bottom three are what TLC printed for the broken one. They are identical until the last column shown for the bad run, where r2 aborts even though r1 has committed. The guard you deleted is the only thing preventing it.</p>
+<h2>Comments and layout</h2>
+<p><code>\*</code> starts an end-of-line comment, and <code>(* ... *)</code> encloses any other comment. A line of dashes between statements is decoration.</p>
+<div class="quiz" data-answer="1" data-explain="The spec states what must be accomplished. The minister, like the transaction manager later, is part of how it's done, so he appears only in a protocol that implements the spec."><fieldset><legend>Why does TCommit have no minister or coordinator?</legend><label><input type="radio" name="q-tcommit" value="0">Transactions don't need coordination in practice</label><label><input type="radio" name="q-tcommit" value="1">He is part of how the outcome is reached, not what it must be</label><label><input type="radio" name="q-tcommit" value="2">TLC can't handle more than one kind of process</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<p class="resources">Lecture page and specs: <a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/video/videos.html">The TLA+ Video Course</a>.</p>

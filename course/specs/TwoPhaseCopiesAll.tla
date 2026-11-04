@@ -1,0 +1,3 @@
+---- MODULE TwoPhaseCopiesAll ----
+EXTENDS TwoPhaseCopies
+====

@@ -1,0 +1,37 @@
+<h1>The next-state relation is a formula, not a command.</h1>
+<p class="lead">{{lesson:states}} ended with an English description of the tiny program's state machine. It is neither precise nor practical. Rewriting it as math gives you something that is simply true or false for each pair of states.</p>
+<!--fig:pairs-->
+<p>That is the destination, shown in the diagram: a formula, and two pairs of states it is true or false for. The rest of this lesson builds the formula and then explains these two verdicts.</p>
+<h2>Why math?</h2>
+<p>Asked what a specification language should look like, most programmers want something like their favorite programming language. TLA+ uses ordinary, simple math instead, and most programmers first find that a bad idea. The team behind the real-time operating system from {{lesson:why}} started out biased toward a C-like language and saw the math as a hindrance. They ended up calling it a major benefit, because it forced them to reason more abstractly about the system.</p>
+<h2>The initial values</h2>
+<p>The initial values are <code>i</code> equal to 0 and <code>pc</code> equal to <code>"start"</code>. The word “and” becomes a math operator, which is <code>&amp;&amp;</code> in some programming languages and ∧ in math. In the ASCII you type, it is <code>/\</code>:</p>
+<pre><code>(i = 0) /\ (pc = "start")</code></pre>
+<h2>Turning the relation into notation</h2>
+<p>The English relation needs a handful of replacements:</p>
+<div class="table-wrap"><table><thead><tr><th>English</th><th>Notation</th><th>Note</th></tr></thead><tbody><tr><td>current value of pc</td><td><code>pc</code></td><td>An unprimed variable means its value in the current state.</td></tr><tr><td>next value of pc</td><td><code>pc'</code></td><td>Read “pc prime”: its value in the next state.</td></tr><tr><td>equals</td><td><code>=</code></td><td>Plain equality, as in 2 + 2 = 4.</td></tr><tr><td>in</td><td><code>\in</code></td><td>“Is an element of,” written ∈ in math.</td></tr><tr><td>{0, 1, ..., 1000}</td><td><code>0..1000</code></td><td>“...” is informal. <code>..</code> is a precisely defined operator.</td></tr><tr><td>the two lines of a then clause</td><td><code>/\</code></td><td>There is an implicit “and”: both must be true.</td></tr><tr><td>no next values</td><td><code>FALSE</code></td><td>See below.</td></tr></tbody></table></div>
+<p>The last row needs thought. “No next values” must become a formula that isn't true for any values of <code>i</code>, <code>pc</code>, <code>i'</code>, and <code>pc'</code>. The simplest is the formula that is always false: <code>FALSE</code>. Most TLA+ keywords are uppercase, so the result, as you would type it in ASCII, is:</p>
+<pre><code>IF pc = "start"
+  THEN (i' \in 0..1000) /\
+       (pc' = "middle")
+  ELSE IF pc = "middle"
+         THEN (i' = i + 1) /\
+              (pc' = "done")
+         ELSE FALSE</code></pre>
+<h2>How to read it</h2>
+<p>The formula relates four values: <code>i</code>, <code>pc</code>, <code>i'</code>, and <code>pc'</code>. It does <em>not</em> mean “if pc equals start, do the THEN part, otherwise do the ELSE part.” It means that if <code>pc</code> equals <code>"start"</code>, the value of the whole formula equals the value of the THEN formula, and otherwise it equals the value of the ELSE formula.</p>
+<!--fig:tree-->
+<p>Use the tree to check the two pairs in the first diagram.</p>
+<p><strong>The true pair:</strong> <code>i = 17</code>, <code>pc = "start"</code>, <code>i' = 534</code>, <code>pc' = "middle"</code>. The first test is true, so the tree goes to the first THEN formula. 534 is in <code>0..1000</code> and <code>pc'</code> is <code>"middle"</code>, so both parts are true and the formula is true. You may have noticed that <code>i = 17</code> with <code>pc = "start"</code> never occurs when the program runs, since <code>i</code> starts at 0. That doesn't matter here: the formula has a value for any four values you give it.</p>
+<p><strong>The false pair:</strong> <code>i = 534</code>, <code>pc = "middle"</code>, <code>i' = 77</code>, <code>pc' = "done"</code>. The first test is false and the second is true, so the tree goes to the second THEN formula. <code>pc'</code> is right, but 77 does not equal 534 + 1, so the formula is false.</p>
+<details class="answer"><summary>Predict: what is the value for <code>i = 5, pc = "middle", i' = 6, pc' = "middle"</code>?</summary><p>False. The second test is true and <code>i' = i + 1</code> holds, but <code>pc' = "done"</code> does not. An “and” needs both parts.</p></details>
+<details class="answer"><summary>Predict: what is the value for <code>i = 43, pc = "done", i' = 44, pc' = "done"</code>?</summary><p>False. Both tests are false, so the formula equals its last ELSE, which is <code>FALSE</code>. Any values of <code>i'</code> and <code>pc'</code> give the same answer when <code>pc</code> is <code>"done"</code>, and that is what “no next values” means here.</p></details>
+<h2>How many next states?</h2>
+<p>Since the formula is just true or false for each pair, you can ask, for a given current state, how many next states make it true.</p>
+<!--fig:fanout-->
+<p>In the diagram, the start state has 1001, and that is how <code>someNumber()</code> has been described. Nobody says how the number is chosen, only that <code>i'</code> is in the set. The middle state has exactly one. The done state has none, and that is how a state machine halts. Nondeterminism and termination need no special machinery, since both are just the shape of a formula.</p>
+<div class="quiz" data-answer="2" data-explain="The formula is about pairs of values. With pc = &quot;done&quot; both tests fail, so its value is FALSE whatever i' and pc' are, and no next state exists."><fieldset><legend>In this formula, what does the final <code>ELSE FALSE</code> do?</legend><label><input type="radio" name="q-a-program" value="0">Sets a variable to false</label><label><input type="radio" name="q-a-program" value="1">Reports an error when reached</label><label><input type="radio" name="q-a-program" value="2">Makes the formula false for every pair whose <code>pc</code> is neither start nor middle</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<p>You now have the complete description as two formulas: the initial-state formula and the next-state formula. There is a nicer way to write the second one, which comes next.</p>
+<h2>While you watch</h2>
+<p>This lesson covers Lecture 2 up to “The Complete Mathematical Description.” {{lesson:logic}} covers the rest, starting at “A nicer way to write the next-state formula.”</p>
+<ul><li>Look for: the slides that replace one English phrase at a time. The formula gets its shape from that sequence of small substitutions.</li><li>Pause before each of the two evaluated examples and work out the value yourself. The false example is the one to get right.</li><li>The lecture also shows the pretty-printed form, with ∧ and ∈, next to the ASCII. Both are the same formula. This course prints ASCII because it is what you type.</li><li>This lesson adds the decision tree and the count of next states.</li></ul>

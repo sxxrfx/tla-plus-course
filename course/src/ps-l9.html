@@ -1,0 +1,304 @@
+<h1>Problem set 9: say what must happen, and what it assumes.</h1>
+<p class="lead">Four problems on lecture 9: liveness properties, weak and strong fairness, and the alternating bit protocol. Each one asks TLC whether something eventually happens and then asks you why the answer depends on the fairness you assumed. The last problem returns to the trip booking of {{ref:ps-l6}}, {{ref:ps-l7}} and {{ref:ps-l8}}, now over a network that loses messages.</p>
+<p>Every module shown was checked with TLC exactly as printed. Liveness counterexamples aren't unique: TLC may show you a different loop from the one described here, so check yours condition by condition, as {{ref:abp}} does. None of these models uses a symmetry set, since liveness checking must not.</p>
+
+<article class="problem" id="ps-l9-jobs">
+<p class="problem-meta"><span>Problem 1</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">Infrastructure</span></p>
+<h2>Will every background job run?</h2>
+<p class="uses">Draws on {{ref:fairness}}, {{ref:abspec}} and {{ref:abp}}.</p>
+<p>A web app pushes slow work (sending receipts, resizing images) onto a background-job queue with a single worker. Support asks for a guarantee: every job that is submitted is eventually processed. The worker also sends a heartbeat to the scheduler, so a monitor can tell it's alive. Last week a customer's receipt never went out, although the job sat in the queue and the worker's heartbeat stayed green on the monitor the whole time. The module below has no deadlines, because "eventually" has none.</p>
+<pre><code>---------------------------- MODULE PSl9_JobQueue ---------------------------
+\* A background-job queue with one worker. Each job is submitted once.
+\* While running, the worker also sends heartbeats to the scheduler.
+EXTENDS Integers, Sequences
+CONSTANT Job
+VARIABLES queue, submitted, done, beat
+vars == &lt;&lt;queue, submitted, done, beat&gt;&gt;
+Init == /\ queue = &lt;&lt;&gt;&gt;
+        /\ submitted = {}
+        /\ done = {}
+        /\ beat = 0
+Submit(j) == /\ j \notin submitted
+             /\ submitted' = submitted \cup {j}
+             /\ queue' = Append(queue, j)
+             /\ UNCHANGED &lt;&lt;done, beat&gt;&gt;
+Process == /\ queue # &lt;&lt;&gt;&gt;
+           /\ done' = done \cup {Head(queue)}
+           /\ queue' = Tail(queue)
+           /\ UNCHANGED &lt;&lt;submitted, beat&gt;&gt;
+Heartbeat == /\ beat' = 1 - beat
+             /\ UNCHANGED &lt;&lt;queue, submitted, done&gt;&gt;
+Next == Process \/ Heartbeat \/ \E j \in Job : Submit(j)
+Spec == Init /\ [][Next]_vars
+FairNext == Spec /\ WF_vars(Next)
+FairWorker == Spec /\ WF_vars(Process)
+
+EveryJobProcessed == \A j \in Job : (j \in submitted) ~&gt; (j \in done)
+=============================================================================</code></pre>
+<pre><code>SPECIFICATION FairWorker
+CONSTANT Job = {"j1", "j2", "j3"}
+PROPERTY EveryJobProcessed</code></pre>
+<ol class="tasks">
+<li>Run TLC with <code>SPECIFICATION Spec</code>. What does the counterexample end with, and why is it allowed?</li>
+<li>Run it with <code>FairNext</code>. Describe the loop TLC reports, and explain why it satisfies <code>WF_vars(Next)</code>.</li>
+<li>Run it with <code>FairWorker</code>, as in the cfg shown. Report the result.</li>
+<li>Nothing is fair about <code>Submit</code>. Should it be? Say what <code>WF_vars(\E j \in Job : Submit(j))</code> would claim about the users of the app.</li>
+</ol>
+<div class="numcheck" data-answer="76" data-explain="All three runs explore the same 76 distinct states: fairness changes which behaviors count, not which states are reachable." data-retry="Run the cfg as shown and read the last line of TLC's output."><label>Distinct states TLC reports for <code>FairWorker</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="0" data-explain="Once the queue is non-empty, only Process removes elements from it, so Process stays enabled until a Process step happens. An action that stays enabled until it is taken needs only weak fairness."><fieldset><legend>Why is weak fairness enough for <code>Process</code>?</legend><label><input type="radio" name="q-ps-l9-jobs" value="0">Once enabled, it stays enabled until a Process step occurs</label><label><input type="radio" name="q-ps-l9-jobs" value="1">Process is enabled in every state</label><label><input type="radio" name="q-ps-l9-jobs" value="2">Strong fairness can't be used with sequences</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p><code>WF_vars(Next)</code> needs Next steps to keep happening while Next is enabled. Is there any state where some Next step is not possible? Which action is always enabled?</p></details>
+<details class="answer solution"><summary>Solution</summary><p><strong>1.</strong> TLC reports <code>EveryJobProcessed</code> violated. In this run, some jobs are submitted and processed, and the trace ends with j1 still in the queue followed by "Stuttering". <code>Spec</code> says only what may happen, so a behavior may stop at any point. TLC even warns that the stuttering counterexample may come from a missing fairness condition.</p>
+<p><strong>2.</strong> TLC again reports a violation, this time ending in a loop. In the run here, j1 is submitted and processed, j3 and j2 are submitted, and then states 5 and 6 alternate by <code>Heartbeat</code> steps forever while j3 and j2 wait in the queue. Every step is a Next step, so <code>WF_vars(Next)</code> is satisfied. It requires only that Next steps keep happening, not that any particular one does. This is the same weakness {{ref:abp}} found in <code>WF_vars(Next)</code> for the alternating bit protocol.</p>
+<!--fig:jobs-->
+<p><strong>3.</strong> No error, 76 distinct states. In a state where some job is in the queue, <code>Process</code> is enabled and stays enabled until it runs, so weak fairness forces a <code>Process</code> step. The queue is first-in first-out, so a submitted job reaches the head after the jobs before it have been processed.</p>
+<p><strong>4.</strong> No. That condition would say that users keep submitting jobs as long as some job hasn't been submitted, which is a claim about the environment, not the system, and it's false. Fairness belongs on actions the system promises to take. The property is already conditional: it talks only about jobs that <em>are</em> submitted.</p></details>
+</article>
+
+<article class="problem" id="ps-l9-rwlock">
+<p class="problem-meta"><span>Problem 2</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Databases</span></p>
+<h2>A migration that never gets its lock</h2>
+<p class="uses">Draws on {{ref:fairness}}, {{ref:abp}} and {{ref:sets}}.</p>
+<p>A database's lock manager lets many queries hold a table lock in shared mode, while a schema migration (<code>ALTER TABLE</code>) needs it exclusively. The first version grants a shared lock whenever no writer <em>holds</em> the table. On a busy table the migration has been waiting for an hour. The team's first idea is "make the scheduler fairer". The module below lets you test that idea. Queries release the lock eventually (weak fairness on every release), and the three specs differ only in the fairness of <code>WriteAcquire</code> and in one guard.</p>
+<pre><code>---------------------------- MODULE PSl9_RWLock -----------------------------
+\* A table lock: queries take it shared, a schema migration takes it
+\* exclusive. writer is "idle", "waiting" or "writing".
+CONSTANT Reader
+VARIABLES readers, writer
+vars == &lt;&lt;readers, writer&gt;&gt;
+Init == readers = {} /\ writer = "idle"
+
+ReadAcquire(r) == /\ r \notin readers
+                  /\ writer # "writing"
+                  /\ readers' = readers \cup {r}
+                  /\ writer' = writer
+\* The fix: a waiting writer also blocks new readers.
+ReadAcquireQueued(r) == writer = "idle" /\ ReadAcquire(r)
+ReadRelease(r) == /\ r \in readers
+                  /\ readers' = readers \ {r}
+                  /\ writer' = writer
+Request      == writer = "idle"    /\ writer' = "waiting" /\ readers' = readers
+WriteAcquire == /\ writer = "waiting"
+                /\ readers = {}
+                /\ writer' = "writing"
+                /\ readers' = readers
+WriteRelease == writer = "writing" /\ writer' = "idle"    /\ readers' = readers
+
+Next   == Request \/ WriteAcquire \/ WriteRelease
+          \/ \E r \in Reader : ReadAcquire(r) \/ ReadRelease(r)
+QNext  == Request \/ WriteAcquire \/ WriteRelease
+          \/ \E r \in Reader : ReadAcquireQueued(r) \/ ReadRelease(r)
+
+Releases == WF_vars(WriteRelease) /\ \A r \in Reader : WF_vars(ReadRelease(r))
+WFSpec  == Init /\ [][Next]_vars  /\ Releases /\ WF_vars(WriteAcquire)
+SFSpec  == Init /\ [][Next]_vars  /\ Releases /\ SF_vars(WriteAcquire)
+QWFSpec == Init /\ [][QNext]_vars /\ Releases /\ WF_vars(WriteAcquire)
+
+WriterProgress == (writer = "waiting") ~&gt; (writer = "writing")
+=============================================================================</code></pre>
+<pre><code>SPECIFICATION WFSpec
+CONSTANT Reader = {"q1", "q2"}
+PROPERTY WriterProgress</code></pre>
+<ol class="tasks">
+<li>Run <code>WFSpec</code> with <code>Reader = {"q1", "q2"}</code>. Is <code>WriteAcquire</code> ever enabled in the loop TLC reports? Why doesn't weak fairness force it?</li>
+<li>Run <code>SFSpec</code>, first with <code>Reader = {"q1"}</code>, then with two readers. Explain why strong fairness helps with one reader and not with two.</li>
+<li>Run <code>QWFSpec</code> with two readers. What changed, and why is weak fairness enough now?</li>
+<li>PostgreSQL behaves like the fixed version: once a statement is waiting for an <code>ACCESS EXCLUSIVE</code> lock, later requests that conflict with it, even a plain <code>SELECT</code>'s <code>ACCESS SHARE</code>, wait behind it. What does the fix cost while a long query holds the table, and why do migration guides recommend setting <code>lock_timeout</code>?</li>
+</ol>
+<div class="numcheck" data-answer="2|two" data-explain="With one query the table becomes free each time it releases, so WriteAcquire is enabled again and again, and strong fairness forces it. With two, they can take turns so the table is never free, and WriteAcquire is never enabled at all." data-retry="Try the smallest Reader sets with SFSpec."><label>Smallest number of queries for which <code>SFSpec</code> still starves the migration <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="1" data-explain="Fairness only constrains actions that are enabled (continuously or repeatedly). When readers overlap, WriteAcquire is never enabled, so no fairness condition on it says anything. The fix has to change what is enabled: new readers must wait."><fieldset><legend>The migration starves under <code>SFSpec</code> with two queries. What has to change?</legend><label><input type="radio" name="q-ps-l9-rwlock" value="0">A fairness condition stronger than SF</label><label><input type="radio" name="q-ps-l9-rwlock" value="1">The protocol, so that WriteAcquire becomes enabled</label><label><input type="radio" name="q-ps-l9-rwlock" value="2">Nothing; TLC's counterexample is a false alarm</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Write down, for each state of the loop, whether <code>readers = {}</code>. Weak fairness needs an action enabled continuously; strong fairness needs it enabled infinitely often. Neither says anything about an action that is never enabled.</p></details>
+<details class="answer solution"><summary>Solution</summary><p><strong>1.</strong> TLC reports <code>WriterProgress</code> violated. In this run the writer requests the lock, then q2 acquires and releases forever. <code>WriteAcquire</code> is enabled in the states where <code>readers = {}</code> and disabled whenever q2 holds the lock. It is never <em>continuously</em> enabled, so weak fairness asks nothing of it. That's the flicker from {{ref:fairness}}.</p>
+<p><strong>2.</strong> With one query, <code>SFSpec</code> gives no error (5 distinct states). Each release by q1 makes the table free, so <code>WriteAcquire</code> is enabled infinitely often, and strong fairness forces it to happen. With two queries TLC again reports a violation:</p>
+<!--fig:rw-->
+<p>q1 and q2 overlap, so one of them always holds the lock. <code>readers</code> is never empty, <code>WriteAcquire</code> is never enabled, and strong fairness, which talks only about enabled actions, doesn't apply. Each query still releases the lock infinitely often, so the release fairness holds too. No scheduler policy fixes this, because it isn't a scheduling problem.</p>
+<p><strong>3.</strong> No error (9 distinct states). <code>ReadAcquireQueued</code> refuses new shared locks while the writer is waiting. The current holders release because of their weak fairness, <code>readers</code> becomes empty and stays empty, and <code>WriteAcquire</code> is then continuously enabled, so weak fairness is enough. The fix changed the protocol, not the fairness.</p>
+<p><strong>4.</strong> While the migration waits behind one long-running query, every new query on that table waits behind the migration. To users, a slow report plus a migration looks like a table outage. Setting <code>lock_timeout</code> limits how long the migration waits in the queue: if it can't get the lock quickly, it fails and is retried later, and the other queries proceed. That's the same trade-off as the model: whoever waits blocks those behind it.</p></details>
+</article>
+
+<article class="problem" id="ps-l9-sensor">
+<p class="problem-meta"><span>Problem 3</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Networking</span></p>
+<h2>The alternating bit protocol over a link that reorders</h2>
+<p class="uses">Draws on {{ref:abp}}, {{ref:abspec}} and {{ref:messages}}.</p>
+<p>A battery-powered temperature sensor (A) sends readings to a gateway (B) using the alternating bit protocol, the way the firmware team learned it. On the test bench, over a serial link that delivers in order, everything works. In the field the link is UDP, and UDP datagrams can be lost, duplicated, and delivered out of order. Now and then, the dashboard shows an old reading as new.</p>
+<p>The module is the lesson's <code>AB</code> with one change: when <code>Reorder</code> is <code>TRUE</code>, a receiver may take any message in its channel, not just the head. <code>PSl9_LinkSpec</code> is <code>ABSpec</code> from {{ref:abspec}}, unchanged except for its name.</p>
+<pre><code>----------------------------- MODULE PSl9_Sensor ----------------------------
+\* The alternating bit protocol between a sensor (A) and a gateway (B).
+\* As module AB, except a receiver may take ANY message in its channel when
+\* Reorder is TRUE, as over UDP. With Reorder = FALSE it is exactly AB.
+EXTENDS Integers, Sequences
+CONSTANTS Data, Reorder
+Remove(i, seq) ==
+  [j \in 1..(Len(seq) - 1) |-&gt; IF j &lt; i THEN seq[j] ELSE seq[j + 1]]
+VARIABLES AVar, BVar, AtoB, BtoA
+vars == &lt;&lt;AVar, BVar, AtoB, BtoA&gt;&gt;
+TypeOK == /\ AVar \in Data \X {0, 1}
+          /\ BVar \in Data \X {0, 1}
+          /\ AtoB \in Seq(Data \X {0, 1})
+          /\ BtoA \in Seq({0, 1})
+Init == /\ AVar \in Data \X {1}
+        /\ BVar = AVar
+        /\ AtoB = &lt;&lt;&gt;&gt;
+        /\ BtoA = &lt;&lt;&gt;&gt;
+\* The positions a receiver may take a message from.
+Pick(ch) == IF Reorder THEN 1..Len(ch) ELSE 1..1
+
+ASnd == /\ AtoB' = Append(AtoB, AVar)
+        /\ UNCHANGED &lt;&lt;AVar, BtoA, BVar&gt;&gt;
+ARcv == /\ BtoA # &lt;&lt;&gt;&gt;
+        /\ \E i \in Pick(BtoA) :
+             /\ IF BtoA[i] = AVar[2]
+                  THEN \E d \in Data : AVar' = &lt;&lt;d, 1 - AVar[2]&gt;&gt;
+                  ELSE AVar' = AVar
+             /\ BtoA' = Remove(i, BtoA)
+        /\ UNCHANGED &lt;&lt;AtoB, BVar&gt;&gt;
+BSnd == /\ BtoA' = Append(BtoA, BVar[2])
+        /\ UNCHANGED &lt;&lt;AVar, BVar, AtoB&gt;&gt;
+BRcv == /\ AtoB # &lt;&lt;&gt;&gt;
+        /\ \E i \in Pick(AtoB) :
+             /\ IF AtoB[i][2] # BVar[2]
+                  THEN BVar' = AtoB[i]
+                  ELSE BVar' = BVar
+             /\ AtoB' = Remove(i, AtoB)
+        /\ UNCHANGED &lt;&lt;AVar, BtoA&gt;&gt;
+LoseMsg == /\ \/ /\ \E i \in 1..Len(AtoB) : AtoB' = Remove(i, AtoB)
+                 /\ BtoA' = BtoA
+              \/ /\ \E i \in 1..Len(BtoA) : BtoA' = Remove(i, BtoA)
+                 /\ AtoB' = AtoB
+           /\ UNCHANGED &lt;&lt;AVar, BVar&gt;&gt;
+Next == ASnd \/ ARcv \/ BSnd \/ BRcv \/ LoseMsg
+Spec == Init /\ [][Next]_vars
+
+ABS == INSTANCE PSl9_LinkSpec
+HighSafety == ABS!Spec
+Bound == (Len(AtoB) &lt;= 2) /\ (Len(BtoA) &lt;= 2)
+=============================================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS Data = {d1, d2}
+          Reorder = TRUE
+CONSTRAINT Bound
+INVARIANT TypeOK
+PROPERTY HighSafety</code></pre>
+<ol class="tasks">
+<li>Run it with <code>Reorder = FALSE</code> and check that you get the lesson's result.</li>
+<li>Run it with <code>Reorder = TRUE</code>, as shown. Report the length of the trace, and say which message is delivered out of order.</li>
+<li>In {{ref:abp}}, deleting B's bit test changed nothing on the in-order model. Which test does the reordered trace defeat, and why does a single bit not suffice?</li>
+<li>Describe a change to the messages that would let B tell a stale copy from a new value. What makes it hard to check with TLC on a finite model?</li>
+</ol>
+<div class="numcheck" data-answer="7|seven" data-explain="BSnd, ASnd, ARcv, ASnd, BRcv of the newer copy, BRcv of the stale copy: six steps, seven states." data-retry="A has to send twice, with a new value in between."><label>Number of states in TLC's trace with <code>Reorder = TRUE</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="2" data-explain="In state 6, AVar = BVar = &lt;&lt;d1, 0&gt;&gt;. ABSpec's B is enabled only when AVar # BVar, and A changes AVar, not BVar. So the last step, which changes BVar, is neither: TLC reports the action property of ABS!Spec violated."><fieldset><legend>Why is the last step of the trace not allowed by <code>ABS!Spec</code>?</legend><label><input type="radio" name="q-ps-l9-sensor" value="0">Because B's new value isn't in Data</label><label><input type="radio" name="q-ps-l9-sensor" value="1">Because the channel was longer than Bound</label><label><input type="radio" name="q-ps-l9-sensor" value="2">Because BVar changes while AVar = BVar, which no ABSpec step allows</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>A keeps sending its current value, so old copies can stay in <code>AtoB</code> after the value has been acknowledged. With one bit, "different from my bit" means "new" only if nothing older than the previous value can still arrive.</p></details>
+<details class="answer solution"><summary>Solution</summary><p><strong>1.</strong> No error, 216 distinct states, the same as module <code>AB</code> in {{ref:abp}}. With <code>Reorder = FALSE</code>, <code>Pick</code> is <code>1..1</code>, so each receive takes the head, exactly as before.</p>
+<p><strong>2.</strong> TLC reports the action property of <code>PSl9_LinkSpec</code> violated after 7 states:</p>
+<!--fig:reorder-->
+<p>B acknowledges with bit 1 (state 2). A sends <code>&lt;&lt;d1, 1&gt;&gt;</code>, a copy of the value B already has (state 3), then receives the ack, picks the new value <code>&lt;&lt;d1, 0&gt;&gt;</code> (state 4), and sends it (state 5). B takes the newer message first, out of order (state 6). Then it takes the old <code>&lt;&lt;d1, 1&gt;&gt;</code>, sees a bit different from its own, and accepts it as new (state 7). The data happens to be d1 both times, but B has gone back to a stale copy of the previous value and treated it as a new one. With different readings, the dashboard shows an old reading as new, as in the field.</p>
+<p><strong>3.</strong> B's test: "the bit differs from mine, so this is new". On a first-in first-out channel, the old copies of the previous value were ahead of the new value in the channel, so by the time B accepts the new value they have been received or lost. With reordering, an old copy can arrive after the new value. Because the bit only alternates, a copy of the previous value carries the same bit as the next new value, so B can't tell them apart. One bit distinguishes a value only from its immediate neighbours.</p>
+<p><strong>4.</strong> Number each value with a counter instead of a bit, and have B accept only the number after the last one it accepted. That is the idea behind sequence numbers in protocols such as TCP. The counter grows without bound, so a TLC model needs another constraint on it, and you must say that the result holds only within that bound, just as with channel lengths in {{ref:abp}}. A counter that wraps around has the same weakness, if an old copy can survive until the counter comes back to its number.</p></details>
+</article>
+
+<article class="problem" id="ps-l9-booking-live">
+<p class="problem-meta"><span>Problem 4</span><span class="level" title="Difficulty 3 of 3">●●●</span><span class="domain">Databases</span></p>
+<h2>Synthesis: does every booking eventually decide?</h2>
+<p class="uses">Draws on {{ref:fairness}}, {{ref:abp}}, {{ref:messages}}, {{ref:transactions}}, {{ref:ps-l6}}, {{ref:ps-l7}} and {{ref:ps-l8}}.</p>
+<p>The trip booking from {{ref:ps-l6}} (flight, hotel and car RMs, one TM, two-phase commit) is moving to a network that loses messages. {{ref:ps-l8}} showed that its steps keep agreement, and {{ref:ps-l7}} showed how a coordinator crash blocks it. Product now asks the liveness question: does every reservation eventually end up committed or aborted, so that held seats, rooms and cars are always released?</p>
+<p>In the module below, <code>net</code> holds messages in flight. Receiving or losing a message removes it, unlike <code>msgs</code> in <code>TwoPhase</code>. Messages are addressed to one RM, and the TM may abort at any time while undecided, which models a timeout. <code>RMResend</code> and <code>TMResend</code> are retries. Because <code>net</code> is a set of finitely many possible messages, the channel is bounded without a state constraint.</p>
+<pre><code>-------------------------- MODULE PSl9_BookingLive --------------------------
+\* Two-phase commit for the trip booking over a network that loses messages.
+\* net holds the messages in flight: receiving or losing one removes it, so
+\* a lost message is gone unless someone sends it again. net is a set, so it
+\* never holds more than the finitely many different messages.
+CONSTANT RM
+VARIABLES rmState, tmState, tmPrepared, net
+vars == &lt;&lt;rmState, tmState, tmPrepared, net&gt;&gt;
+Prep(r) == [type |-&gt; "Prepared", rm |-&gt; r]
+Dec(r)  == [type |-&gt; IF tmState = "commit" THEN "Commit" ELSE "Abort", rm |-&gt; r]
+
+Init == /\ rmState = [r \in RM |-&gt; "working"]
+        /\ tmState = "init"          \* then "commit" or "abort"
+        /\ tmPrepared = {}
+        /\ net = {}
+-----------------------------------------------------------------------------
+RMPrepare(r) == /\ rmState[r] = "working"
+                /\ rmState' = [rmState EXCEPT ![r] = "prepared"]
+                /\ net' = net \cup {Prep(r)}
+                /\ UNCHANGED &lt;&lt;tmState, tmPrepared&gt;&gt;
+RMChooseToAbort(r) == /\ rmState[r] = "working"
+                      /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
+                      /\ UNCHANGED &lt;&lt;tmState, tmPrepared, net&gt;&gt;
+RMRcvCommit(r) == /\ [type |-&gt; "Commit", rm |-&gt; r] \in net
+                  /\ rmState' = [rmState EXCEPT ![r] = "committed"]
+                  /\ net' = net \ {[type |-&gt; "Commit", rm |-&gt; r]}
+                  /\ UNCHANGED &lt;&lt;tmState, tmPrepared&gt;&gt;
+RMRcvAbort(r) == /\ [type |-&gt; "Abort", rm |-&gt; r] \in net
+                 /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
+                 /\ net' = net \ {[type |-&gt; "Abort", rm |-&gt; r]}
+                 /\ UNCHANGED &lt;&lt;tmState, tmPrepared&gt;&gt;
+TMRcvPrepared(r) == /\ tmState = "init"
+                    /\ Prep(r) \in net
+                    /\ tmPrepared' = tmPrepared \cup {r}
+                    /\ net' = net \ {Prep(r)}
+                    /\ UNCHANGED &lt;&lt;rmState, tmState&gt;&gt;
+\* The TM decides and sends one copy of the decision to every RM.
+TMDecide ==
+  /\ tmState = "init"
+  /\ \/ /\ tmPrepared = RM
+        /\ tmState' = "commit"
+        /\ net' = net \cup {[type |-&gt; "Commit", rm |-&gt; r] : r \in RM}
+     \/ /\ tmState' = "abort"                 \* e.g. after a timeout
+        /\ net' = net \cup {[type |-&gt; "Abort", rm |-&gt; r] : r \in RM}
+  /\ UNCHANGED &lt;&lt;rmState, tmPrepared&gt;&gt;
+Lose == \E m \in net : /\ net' = net \ {m}
+                       /\ UNCHANGED &lt;&lt;rmState, tmState, tmPrepared&gt;&gt;
+\* Retries.
+RMResend(r) == /\ rmState[r] = "prepared"
+               /\ net' = net \cup {Prep(r)}
+               /\ UNCHANGED &lt;&lt;rmState, tmState, tmPrepared&gt;&gt;
+TMResend(r) == /\ tmState # "init"
+               /\ net' = net \cup {Dec(r)}
+               /\ UNCHANGED &lt;&lt;rmState, tmState, tmPrepared&gt;&gt;
+-----------------------------------------------------------------------------
+Core == \/ TMDecide \/ Lose
+        \/ \E r \in RM : \/ RMPrepare(r) \/ RMChooseToAbort(r)
+                         \/ RMRcvCommit(r) \/ RMRcvAbort(r) \/ TMRcvPrepared(r)
+Next          == Core \/ \E r \in RM : RMResend(r) \/ TMResend(r)
+NoTMRetryNext == Core \/ \E r \in RM : RMResend(r)
+NoRMRetryNext == Core \/ \E r \in RM : TMResend(r)
+
+Base == /\ WF_vars(TMDecide)
+        /\ \A r \in RM : WF_vars(RMPrepare(r) \/ RMChooseToAbort(r))
+WFRcv == \A r \in RM : /\ WF_vars(TMRcvPrepared(r))
+                       /\ WF_vars(RMRcvCommit(r) \/ RMRcvAbort(r))
+SFRcv == \A r \in RM : /\ SF_vars(TMRcvPrepared(r))
+                       /\ SF_vars(RMRcvCommit(r) \/ RMRcvAbort(r))
+RMRetry == \A r \in RM : WF_vars(RMResend(r))
+TMRetry == \A r \in RM : WF_vars(TMResend(r))
+
+WFSpec        == Init /\ [][Next]_vars /\ Base /\ WFRcv /\ RMRetry /\ TMRetry
+SFSpec        == Init /\ [][Next]_vars /\ Base /\ SFRcv /\ RMRetry /\ TMRetry
+NoTMRetrySpec == Init /\ [][NoTMRetryNext]_vars /\ Base /\ SFRcv /\ RMRetry
+NoRMRetrySpec == Init /\ [][NoRMRetryNext]_vars /\ Base /\ SFRcv /\ TMRetry
+
+Decided(r) == rmState[r] \in {"committed", "aborted"}
+EveryoneDecides == \A r \in RM : &lt;&gt;Decided(r)
+Consistent == \A r1, r2 \in RM : ~(rmState[r1] = "aborted" /\ rmState[r2] = "committed")
+=============================================================================</code></pre>
+<pre><code>SPECIFICATION SFSpec
+CONSTANT RM = {"flight", "hotel", "car"}
+INVARIANT Consistent
+PROPERTY EveryoneDecides
+CHECK_DEADLOCK FALSE</code></pre>
+<ol class="tasks">
+<li>Run <code>WFSpec</code>. Describe the loop in TLC's counterexample, and name the fairness condition that the loop escapes and why.</li>
+<li>Run <code>SFSpec</code>, as in the cfg shown. Report the result and connect it to the argument in {{ref:abp}}.</li>
+<li>Run <code>NoTMRetrySpec</code> and <code>NoRMRetrySpec</code>. One retry is essential and the other isn't. Which, and why?</li>
+<li>Add the coordinator crash of {{ref:ps-l7}}: after <code>Crash</code>, no TM action is enabled. Can any fairness condition on the TM's actions bring back <code>EveryoneDecides</code>? Answer, then check the quiz.</li>
+</ol>
+<div class="numcheck" data-answer="6560" data-explain="TLC reports 6560 distinct states for SFSpec, the same as for WFSpec: the safety part is the same, and only the fairness conditions differ." data-retry="Run the cfg as shown and read the last line."><label>Distinct states TLC reports for <code>SFSpec</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="quiz" data-answer="0" data-explain="Fairness constrains only actions that are enabled. After the crash, the TM's actions are disabled forever, so every WF and SF condition on them is satisfied trivially, and a prepared RM can wait forever. A hidden run of this variant, with the same fairness, reports EveryoneDecides violated. Bringing back liveness needs a different protocol: recovery from a durable log, or Paxos Commit's acceptors."><fieldset><legend>With the crash added, can fairness alone restore <code>EveryoneDecides</code>?</legend><label><input type="radio" name="q-ps-l9-booking-live" value="0">No: a crashed TM's actions are never enabled, so fairness asks nothing of them</label><label><input type="radio" name="q-ps-l9-booking-live" value="1">Yes, with SF on TMDecide</label><label><input type="radio" name="q-ps-l9-booking-live" value="2">Yes, with WF on Crash</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Every loop TLC can report under <code>WFSpec</code> must satisfy each WF condition. Look for a receive action that the loop keeps enabling with a retry and then disabling with <code>Lose</code>. For task 3, ask what the TM does if a Prepared message never arrives.</p></details>
+<details class="answer solution"><summary>Solution</summary><p><strong>1.</strong> TLC reports <code>EveryoneDecides</code> violated, with a loop. In the run here the TM has decided abort, flight and car have aborted, and hotel is still prepared. Inside the loop, <code>TMResend("hotel")</code> puts an Abort for hotel into <code>net</code>, other steps follow, and <code>Lose</code> removes it before hotel takes it, again and again:</p>
+<!--fig:loss-->
+<p><code>RMRcvAbort("hotel")</code> is enabled for a while each time around and then disabled by <code>Lose</code>, so it is never continuously enabled. <code>WF_vars(RMRcvCommit("hotel") \/ RMRcvAbort("hotel"))</code> therefore asks nothing of it. The retries still happen as their weak fairness requires, so every condition of <code>WFSpec</code> holds on this behavior.</p>
+<p><strong>2.</strong> No error, 6560 distinct states. Retries make each receive action enabled infinitely often, and strong fairness on receives then forces it to happen. This is the argument for <code>SF_vars(ARcv)</code> and <code>SF_vars(BRcv)</code> in {{ref:abp}}: strong fairness doesn't stop losses, it says that a message sent again and again eventually gets through.</p>
+<p><strong>3.</strong> <code>NoTMRetrySpec</code> is violated: in the run here the TM aborts, Abort messages for flight and hotel are lost, and those two RMs stay prepared forever. Nothing would ever send them the decision again. <code>NoRMRetrySpec</code> gives no error (2933 distinct states). A lost Prepared message can't block anyone, because the TM may abort while it is undecided, and weak fairness on <code>TMDecide</code> makes it decide. Losing a vote costs a commit that could have happened. It doesn't cost liveness. The retry that matters is the one that carries the decision, because a prepared RM can't leave that state on its own, as {{ref:transactions}} showed.</p>
+<p><strong>4.</strong> No, as the quiz explains: a hidden run that adds <code>Crash</code> to <code>SFSpec</code> reports <code>EveryoneDecides</code> violated, ending with hotel prepared and the TM down. Fairness is an assumption about steps that <em>can</em> happen. It can't make a stopped process act. The booking can only be live if the decision survives the TM, either in a log that a restarted TM reads back, or in Paxos Commit's acceptors from {{ref:ps-l7}}, which needs a majority of them to keep working.</p></details>
+</article>

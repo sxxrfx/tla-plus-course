@@ -1,0 +1,66 @@
+<h1>Run a spec, meet deadlock, then write your own.</h1>
+<p class="lead">With TLC installed from {{lesson:tools}}, you run the tiny program's spec exactly as the lecture does. TLC reports an error, and understanding why teaches you what TLC can and can't know. Then you write a small spec of your own and break it.</p>
+<!--fig:simple-->
+<h2>Run SimpleProgram</h2>
+<p>Create <code>SimpleProgram.tla</code> with the module from {{lesson:logic}}, and next to it a config file, <code>SimpleProgram.cfg</code>. A config file is the text form of a model. These two lines name the formulas TLC should treat as the initial-state and next-state formulas:</p>
+<pre><code>INIT Init
+NEXT Next</code></pre>
+<p>In the Toolbox, you create a model from the TLC Model Checker menu instead, and it fills these in for you. Run TLC. It stops with an error:</p>
+<pre><code>Error: Deadlock reached.
+Error: The behavior up to this point is:
+State 1: &lt;Initial predicate&gt;
+/\ i = 0
+/\ pc = "start"
+State 2: ...
+/\ i = 0
+/\ pc = "middle"
+State 3: ...
+/\ i = 1
+/\ pc = "done"</code></pre>
+<p>That output is a <strong>behavior</strong>, printed one state at a time. Which number it picks at State 2 can differ between runs. Follow it through the diagram: start, then middle, then done. The dashed red arrow is what TLC noticed: from <code>pc = "done"</code>, no next state exists.</p>
+<h2>Deadlock and termination</h2>
+<p>Lamport's distinction is simple. <strong>Deadlock</strong> means execution stopped when it wasn't supposed to. <strong>Termination</strong> means it stopped when it was supposed to. Here the program is supposed to stop, so this is termination. But nothing in the spec says whether an execution should stop, so TLC can't tell them apart, and since most systems should not stop, it reports any stop as deadlock.</p>
+<p>When stopping is intended, turn the check off. In the Toolbox, it is the Deadlock checkbox on the Model Overview page. In a config file, add a line:</p>
+<pre><code>CHECK_DEADLOCK FALSE</code></pre>
+<p>Now TLC reports <code>Model checking completed. No error has been found.</code> and <code>2003 distinct states found</code>. The diagram accounts for that number: 1 start state, 1001 middle states, and 1001 done states. Disable the check only when you know stopping is correct. Otherwise you are switching off a real alarm.</p>
+<div class="quiz" data-answer="2" data-explain="The spec doesn't say whether it should stop, so TLC reports any state with no next state. For this program that stop is the correct end."><fieldset><legend>Why does TLC report deadlock on a correct program?</legend><label><input type="radio" name="q-a-counter" value="0">The program has a bug in its last line</label><label><input type="radio" name="q-a-counter" value="1">Two processes wait for each other</label><label><input type="radio" name="q-a-counter" value="2">It found a state with no next state, and the spec doesn't say that stopping is intended</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>Your turn: a counter</h2>
+<p>Write a spec without a C program to start from. This one describes a counter that starts at 0 and increments up to a bound. Save it as <code>Counter.tla</code>, since the module name and file name must match.</p>
+<pre><code>---------------- MODULE Counter ----------------
+EXTENDS Integers
+VARIABLE x
+
+Max == 3
+
+Init == x = 0
+
+Next == /\ x &lt; Max
+        /\ x' = x + 1
+
+Safe == x =&lt; Max
+================================================</code></pre>
+<p>In ASCII, “less than or equal” is <code>=&lt;</code>. The first line of <code>Next</code> has no prime, so it is a condition on the current state alone. A step can happen only when it is true. Such a condition is called a <strong>guard</strong>, and {{lesson:actions}} says more about it. Compare it with <code>pc = "start"</code> in SimpleProgram, which plays the same role.</p>
+<p><code>Safe</code> is a formula you claim is always true. A state that occurs in some behavior is <strong>reachable</strong>, and a formula true in every reachable state is an <strong>invariant</strong>. A claimed invariant goes in the config, and TLC tests it in every state it finds:</p>
+<pre><code>INIT Init
+NEXT Next
+INVARIANT Safe
+CHECK_DEADLOCK FALSE</code></pre>
+<p>TLC finishes with no error and 4 distinct states. As with SimpleProgram, the deadlock check has to be off, or TLC stops at <code>x = 3</code>, because this counter is designed to stop there.</p>
+<div class="lab" id="counter-lab"><h2>Explore the bounded model</h2><div class="controls"><label>Max <input id="counter-max" type="number" min="1" max="6" value="3"></label><label><input id="counter-bug" type="checkbox">Use x ≤ Max as the guard</label><button id="counter-step" type="button">Take a step</button><button id="counter-reset" type="button">Restart</button><button id="counter-explore" type="button">Explore all states</button></div><svg id="counter-graph" viewBox="0 0 660 115" role="img" aria-label="Counter state graph"></svg><p class="status" id="counter-status" aria-live="polite"></p></div>
+<p>Changing Max in the lab is like editing the definition <code>Max == 3</code>. “Explore all states” does a breadth-first search of a tiny JavaScript model: all states one step away, then two, and so on. It is not TLC. Now tick the box to weaken the guard, and predict what the search will find before you press the button.</p>
+<!--fig:counters-->
+<p>The diagram compares the two guards. We ran the broken one, with <code>x =&lt; Max</code>, through real TLC. It reports <code>Invariant Safe is violated</code> with a 5-state behavior, 0 through 4, which matches the bottom row. You can reason backward too: to reach the bad state <code>x = 4</code>, the predecessor must be <code>x = 3</code>, and the step must be allowed there. So the guard is the culprit, and you found that without reading a long trace.</p>
+<details class="answer"><summary>Retrieve: what are the two formulas TLC needs, and what is a third thing you can ask it to check?</summary><p>The initial-state formula and the next-state formula. On top of those you can name invariants. You can also decide whether a stop counts as deadlock. Later lessons add more, but this is the whole model so far.</p></details>
+<h2>Transfer: a retry budget</h2>
+<p>A file-upload client allows at most three attempts. Let <code>attempts</code> count those already started, not those remaining.</p>
+<pre><code>Next == /\ attempts &lt; 3
+        /\ attempts' = attempts + 1
+
+BudgetOK == attempts \in 0..3</code></pre>
+<!--fig:retry-->
+<p>In the diagram, the guard reads the old value. At 2 it allows a step to 3, and at 3 it blocks the dashed arrow. That is why “allow three attempts” uses a strict comparison on attempts already used. Running this module through TLC gives 4 distinct states and no error. Writing the sentence out as a trace saves you from guessing whether the comparison should include equality.</p>
+<p>Now imagine resetting <code>attempts</code> to zero whenever the user taps Retry. Each session still passes this check, but one logical upload can now trigger unlimited attempts. If the requirement concerns one logical request, the count must belong to that request, and every way of resetting it must appear in <code>Next</code>.</p>
+<details class="answer"><summary>Exercise: instead count attempts remaining, initially 3. What would you write?</summary><p><code>remaining &gt; 0 /\ remaining' = remaining - 1</code> and the invariant <code>remaining \in 0..3</code>. Decide whether the first attempt consumes the budget. The variable's name can't settle that for you.</p></details>
+<h2>While you watch</h2>
+<p>This lesson covers the hands-on middle of Lecture 3: “Creating a spec,” “The pretty-printer,” and “Running TLC.” Those parts are a live demonstration, so do each thing as he does it and stop the video whenever you need to.</p>
+<ul><li>Look for: what TLC's results page shows, and the point where it reports deadlock.</li><li>Pause before the “Why does TLC report deadlock?” slide and try to answer the question yourself.</li><li>If you use the extension or the command line, your screen will differ. The results are the same: a deadlock error with the same kind of trace.</li><li>This lesson adds the config-file form, the count of 2003, and the counter, which is your first spec not taken from the lecture. The lecture introduces invariants in the next video, and {{lesson:diehard-tlc}} uses them on a bigger model.</li></ul>

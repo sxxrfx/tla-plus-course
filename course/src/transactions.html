@@ -1,0 +1,131 @@
+<h1>Two-phase commit puts the minister back, as a process with messages.</h1>
+<p class="lead">TCommit let one step read every RM's state. Lecture 6 replaces that impossible step with a protocol: a transaction manager (TM) collects "prepared" messages and then announces the result. First you need one more data type, the record, because messages are records.</p>
+<!--fig:normal-->
+<p>This is a real run of the spec below, printed by TLC with two RMs, and it has 8 states. An RM's "prepared" message and its change of state happen in one step. The TM commits only once <code>tmPrepared</code> holds every RM.</p>
+<h2>While you watch</h2>
+<p>Lecture 6 opens with records, then reruns the wedding with texting. Notice that he drops the minister's "are you prepared?" message because TCommit doesn't need it. When he describes each remaining action, stop the video and write the definition yourself, as he asks. Later, compare your version by rerunning TLC. This lesson adds a trace in which an RM aborts, and the <code>commit-lab</code> below. How the spec models messages gets its own treatment in {{lesson:messages}}.</p>
+<h2>Records</h2>
+<pre><code>r == [prof |-&gt; "Fred", num |-&gt; 42]     \* r.prof = "Fred", r.num = 42
+[prof : {"Fred", "Ted"}, num : 0..99]   \* the set of all such records
+[r EXCEPT !.prof = "Red"]               \* same as r except field prof</code></pre>
+<p>A <strong>record</strong> is like a C struct, except that field order doesn't matter. It is really a function whose domain is a set of strings: <code>r.prof</code> abbreviates <code>r["prof"]</code>, and <code>!.prof</code> abbreviates <code>!["prof"]</code>. So you already know how they behave.</p>
+<h2>The spec</h2>
+<pre><code>------------------------------- MODULE TwoPhase -----------------------------
+CONSTANT RM              \* The set of resource managers
+VARIABLES
+  rmState,               \* rmState[r] is the state of RM r
+  tmState,               \* "init" or "done"
+  tmPrepared,            \* the RMs the TM knows are prepared
+  msgs                   \* every message ever sent
+vars == &lt;&lt;rmState, tmState, tmPrepared, msgs&gt;&gt;
+
+Messages == [type : {"Prepared"}, rm : RM] \cup [type : {"Commit", "Abort"}]
+
+TPTypeOK ==
+  /\ rmState \in [RM -&gt; {"working", "prepared", "committed", "aborted"}]
+  /\ tmState \in {"init", "done"}
+  /\ tmPrepared \subseteq RM
+  /\ msgs \subseteq Messages
+
+TPInit ==
+  /\ rmState = [r \in RM |-&gt; "working"]
+  /\ tmState = "init"
+  /\ tmPrepared = {}
+  /\ msgs = {}
+-----------------------------------------------------------------------------
+TMRcvPrepared(r) ==
+  /\ tmState = "init"
+  /\ [type |-&gt; "Prepared", rm |-&gt; r] \in msgs
+  /\ tmPrepared' = tmPrepared \cup {r}
+  /\ UNCHANGED &lt;&lt;rmState, tmState, msgs&gt;&gt;
+
+TMCommit ==
+  /\ tmState = "init"
+  /\ tmPrepared = RM
+  /\ tmState' = "done"
+  /\ msgs' = msgs \cup {[type |-&gt; "Commit"]}
+  /\ UNCHANGED &lt;&lt;rmState, tmPrepared&gt;&gt;
+
+TMAbort ==
+  /\ tmState = "init"
+  /\ tmState' = "done"
+  /\ msgs' = msgs \cup {[type |-&gt; "Abort"]}
+  /\ UNCHANGED &lt;&lt;rmState, tmPrepared&gt;&gt;
+
+RMPrepare(r) ==
+  /\ rmState[r] = "working"
+  /\ rmState' = [rmState EXCEPT ![r] = "prepared"]
+  /\ msgs' = msgs \cup {[type |-&gt; "Prepared", rm |-&gt; r]}
+  /\ UNCHANGED &lt;&lt;tmState, tmPrepared&gt;&gt;
+
+RMChooseToAbort(r) ==
+  /\ rmState[r] = "working"
+  /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
+  /\ UNCHANGED &lt;&lt;tmState, tmPrepared, msgs&gt;&gt;
+
+RMRcvCommitMsg(r) ==
+  /\ [type |-&gt; "Commit"] \in msgs
+  /\ rmState' = [rmState EXCEPT ![r] = "committed"]
+  /\ UNCHANGED &lt;&lt;tmState, tmPrepared, msgs&gt;&gt;
+
+RMRcvAbortMsg(r) ==
+  /\ [type |-&gt; "Abort"] \in msgs
+  /\ rmState' = [rmState EXCEPT ![r] = "aborted"]
+  /\ UNCHANGED &lt;&lt;tmState, tmPrepared, msgs&gt;&gt;
+-----------------------------------------------------------------------------
+TPNext ==
+  \/ TMCommit \/ TMAbort
+  \/ \E r \in RM : TMRcvPrepared(r) \/ RMPrepare(r) \/ RMChooseToAbort(r)
+                     \/ RMRcvCommitMsg(r) \/ RMRcvAbortMsg(r)
+-----------------------------------------------------------------------------
+INSTANCE TCommit
+=============================================================================</code></pre>
+<p>Three pieces of notation are new:</p>
+<ul>
+<li><code>S \cup T</code> (or <code>\union</code>) is the set of elements in S or T or both.</li>
+<li><code>S \subseteq T</code> says every element of S is in T.</li>
+<li><code>UNCHANGED &lt;&lt;a, b&gt;&gt;</code> says each listed variable keeps its value. <code>&lt;&lt;a, b&gt;&gt;</code> is an ordered tuple; <code>vars</code> names the tuple of all four variables.</li>
+</ul>
+<p><code>msgs</code> holds every message ever sent. A <code>Prepared</code> record goes from r to the TM. A <code>Commit</code> or <code>Abort</code> record goes from the TM to all RMs. The formulas with no primes at the start of an action are its <strong>enabling conditions</strong>: conditions on the first state of a step. Put them first. That is easier to read, and TLC often can't handle the action otherwise. Finally, <code>INSTANCE TCommit</code> imports TCommit's definitions, including <code>TCConsistent</code>, applied to this module's <code>rmState</code>.</p>
+<h2>A trace where an RM aborts</h2>
+<!--fig:abort-->
+<p>r2 aborts on its own, shown as a note because no message is sent. In a real system it would tell the TM, but that is an optimization the spec omits. r1 is prepared and can't abort itself; it has to wait to hear from the TM. Nothing makes the TM wait, because <code>TMAbort</code> is enabled whenever <code>tmState = "init"</code>.</p>
+<p>This order is one of many. TLC, asked for any run with this outcome, returned a 5-state trace with <code>TMAbort</code> as the very first step, before anyone had done anything. That is also allowed. The diagram shows the order you would expect in practice, and the guards permit both.</p>
+<h2>Check it with TLC</h2>
+<pre><code>INIT TPInit
+NEXT TPNext
+CONSTANT RM = {"r1", "r2", "r3"}
+INVARIANT TPTypeOK
+INVARIANT TCConsistent
+CHECK_DEADLOCK FALSE</code></pre>
+<p>Result: <strong>no error, 288 distinct states</strong> (1146 generated), the same count the lecture reports. The lecture uses that number as a test of your own definitions: paste one in, rerun, and if TLC finds no error and again 288 states, it's probably correct.</p>
+<h3>Symmetry and model values</h3>
+<!--fig:swap-->
+<p>All RMs play the same role. Swap r1 and r3 everywhere in a reachable state, as in the diagram, and you get another reachable state. Swap them in a whole behavior and you get another allowed behavior, so TLC needn't check both. A set with this property is a <strong>symmetry set</strong>. To use one, make its elements <strong>model values</strong>: special values not equal to anything else, written as bare identifiers. In the Toolbox you tick "Symmetry set". In a <code>.cfg</code> file you need a small wrapper module:</p>
+<pre><code>---- MODULE MCTwoPhase ----
+EXTENDS TwoPhase, TLC
+CONSTANTS r1, r2, r3
+RMs == {r1, r2, r3}
+Sym == Permutations(RMs)
+====</code></pre>
+<pre><code>INIT TPInit
+NEXT TPNext
+CONSTANTS r1 = r1
+          r2 = r2
+          r3 = r3
+          RM &lt;- RMs
+SYMMETRY Sym
+INVARIANT TPTypeOK
+INVARIANT TCConsistent
+CHECK_DEADLOCK FALSE</code></pre>
+<p><code>RM &lt;- RMs</code> replaces the constant by the module's definition <code>RMs</code>. <code>Permutations</code> comes from the <code>TLC</code> module. Result: <strong>no error, 80 distinct states</strong> examined, out of the same 288 reachable ones. Be careful: TLC may miss errors if you declare a symmetry set falsely. For now it's safe if the model values aren't used elsewhere; {{lesson:paxos-commit}} gives the full rule.</p>
+<h2>Is it correct?</h2>
+<p>The run above also checks <code>TCConsistent</code>: one RM can't commit while another aborts. TwoPhase actually does more than keep that invariant: it <em>implements</em> TCommit. That claim needs its own definition, given in {{lesson:implementation}}.</p>
+<div class="lab" id="commit-lab"><h2>Explore the TM's decision</h2><div class="controls"><button id="prepare-a" type="button">Prepare A</button><button id="prepare-b" type="button">Prepare B</button><button id="commit-crash" type="button">Crash coordinator</button><button id="commit-decide" type="button">Commit</button><button id="commit-reset" type="button">Restart</button></div><div id="commit-state" class="readout" aria-live="polite"></div></div>
+<p>In the lab, "coordinator" is the common industry name for the TM, and participants A and B are RMs. It is an educational model, not TLC: it leaves out <code>msgs</code> and <code>tmPrepared</code>, treating "prepared" as instantly known. Prepare both RMs and crash the coordinator. No commit can happen, and nothing lets a prepared RM move. Agreement isn't violated, but the transaction is stuck, which is the starting point of {{lesson:paxos-commit}}.</p>
+<details class="answer"><summary>Predict: both RMs are prepared and the TM has gone silent. Is it safe for an RM to abort on its own?</summary><p>No. The TM may already have sent <code>Commit</code>, and the other RM may have received it. Not having heard is no evidence that no decision exists. The spec gives a prepared RM no way to leave that state except by receiving a message.</p></details>
+<h2>Worked architecture: reserve a seat and charge a wallet</h2>
+<p>A purchase spans an inventory RM and a wallet RM. Preparing means each one promises it can honor a commit and holds what it needs: the seat, the funds. That promise is what makes prepared different from "looks available".</p>
+<p>Trace a hard run with the first diagram. Both prepare; the TM sends <code>Commit</code>; inventory receives it and marks the seat sold, and the wallet hasn't heard yet. For a while one RM is committed and another prepared. <code>TCConsistent</code> allows this, because it forbids only committed alongside aborted. If the wallet then gave up and aborted on a timeout, that would be the forbidden state: a seat sold and no money taken.</p>
+<div class="quiz" data-answer="2" data-explain="TMCommit requires tmPrepared = RM, and tmPrepared only grows when the TM receives a Prepared message. RMs prepare when they choose to, and nothing in the spec requires a TM request."><fieldset><legend>In this spec, what lets the TM commit?</legend><label><input type="radio" name="q-transactions" value="0">It has asked every RM "are you prepared?"</label><label><input type="radio" name="q-transactions" value="1">Every RM's <code>rmState</code> equals "prepared", read directly</label><label><input type="radio" name="q-transactions" value="2">It has received a Prepared message from every RM</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<p class="resources">Compare with the <a target="_blank" rel="noopener noreferrer" href="https://github.com/tlaplus/Examples">official specifications</a> and <a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/video/videos.html">Lamport's lecture page</a>.</p>

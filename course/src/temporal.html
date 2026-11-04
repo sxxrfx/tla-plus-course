@@ -1,0 +1,53 @@
+<h1>A whole specification can be one formula.</h1>
+<p class="lead">So far you have handed TLC two formulas: an initial one and a next-state one, as you did for TwoPhase in {{lesson:transactions}}. A single formula can say both, if it is true or false of a whole behavior. To write it you first sort expressions by how much of a behavior they need, then add one operator, <em>always</em>.</p>
+<!--fig:levels-->
+<h2>Implication, briefly</h2>
+<p>Everything in this lesson and the next is stated with <code>=&gt;</code>, read "implies." <code>P =&gt; Q</code> means: if P is true then Q is true, and otherwise we know nothing. Mathematically, "we know nothing" is the value TRUE, so it equals <code>IF P THEN Q ELSE TRUE</code>.</p>
+<div class="table-wrap"><table><thead><tr><th>P</th><th>Q</th><th>P =&gt; Q</th><th>~Q =&gt; ~P</th></tr></thead><tbody>
+<tr><td>TRUE</td><td>TRUE</td><td>TRUE</td><td>TRUE</td></tr>
+<tr><td>TRUE</td><td>FALSE</td><td>FALSE</td><td>FALSE</td></tr>
+<tr><td>FALSE</td><td>TRUE</td><td>TRUE</td><td>TRUE</td></tr>
+<tr><td>FALSE</td><td>FALSE</td><td>TRUE</td><td>TRUE</td></tr>
+</tbody></table></div>
+<p>The last two columns match, so <code>P =&gt; Q</code> equals <code>~Q =&gt; ~P</code>. "If it's raining the ground is wet" therefore means the same as "if the ground is not wet it's not raining." That sounds wrong because in speech <em>if</em> suggests a cause. In math, implication asserts only that two truths go together.</p>
+<h2>Four kinds of expression</h2>
+<p>Here an <em>expression</em> is complete: after expanding definitions it contains only built-in operators, numbers and strings, declared constants and variables, and identifiers bound inside it. <code>\E v \in Nat : x' = x + v</code> is complete. Its part <code>x' = x + v</code> is not, because <code>v</code> is bound outside that part. A <em>formula</em> is a Boolean-valued expression. The figure sorts expressions from the inside out.</p>
+<ul>
+<li><strong>Constant.</strong> No declared variables, no <code>'</code>, no <code>UNCHANGED</code>. An <code>ASSUME</code> must be a constant formula.</li>
+<li><strong>State.</strong> May also contain declared variables, so it has a value on a state. If a state gives <code>v</code> the set Nat and <code>w</code> the value -42, then <code>v \cup {w}</code> has the value <code>Nat \cup {-42}</code> there.</li>
+<li><strong>Action.</strong> May also contain <code>'</code> and <code>UNCHANGED</code>, so it has a value on a step. If s gives <code>p</code> the value 42 and t gives <code>q</code> the value 24, then <code>p - q'</code> has the value 18 on the step from s to t. An action formula is simply called an <em>action</em>.</li>
+<li><strong>Temporal.</strong> New here. It has a value on a behavior. TLA+ has only Boolean ones.</li>
+</ul>
+<p>Each level is a special case of the next. A state expression is an action expression whose value depends only on the first state of the step. You may also prime any state expression, not just a variable: <code>e'</code> on a step is the value of <code>e</code> in the second state. So <code>UNCHANGED &lt;&lt;x, y, z&gt;&gt;</code> is <code>&lt;&lt;x, y, z&gt;&gt;' = &lt;&lt;x, y, z&gt;&gt;</code>, which is <code>(x' = x) /\ (y' = y) /\ (z' = z)</code>.</p>
+<h2>From two formulas to one</h2>
+<p>TPSpec should be true on a behavior exactly when <code>TPInit</code> holds on the first state and <code>TPNext</code> holds on every step. The figure shows both duties on a real TLC trace. The first duty needs nothing new, because a state formula counts as a temporal formula that is true on a behavior when it is true on the first state. The second needs the <em>always</em> operator, typed <code>[]</code>. <code>[]TPNext</code> is true on a behavior when <code>TPNext</code> is true on every step.</p>
+<!--fig:trace-->
+<p>That suggests <code>TPSpec == TPInit /\ []TPNext</code>. It is almost right. The definition at the end of module TwoPhase is:</p>
+<pre><code>TPSpec == TPInit /\ [][TPNext]_&lt;&lt;rmState, tmState, tmPrepared, msgs&gt;&gt;</code></pre>
+<p>Applied to a state formula, always needs no brackets or subscript: <code>[]TPTypeOK</code> means <code>TPTypeOK</code> holds on every state, because its value on each step depends only on that step's first state.</p>
+<h2>The subscript allows stuttering</h2>
+<p><code>[TPNext]_vars</code> abbreviates <code>TPNext \/ UNCHANGED vars</code>, where <code>vars</code> is the tuple of the spec's variables. A step that leaves all of them unchanged is a <strong>stuttering step</strong>. So the formula says every step is a <code>TPNext</code> step or changes nothing. In the figure, the two stutter columns are allowed and the red one is not.</p>
+<!--fig:stutter-->
+<p>Why a spec should allow steps that do nothing is the subject of {{lesson:implementation}}. For now, take the two facts it implies. A formula of this form can never require anything to happen, and it can never be violated by a pause.</p>
+<details class="answer"><summary>Predict: TPSpec has variables rmState, tmState, tmPrepared, msgs. Is a step that changes only tmPrepared always allowed?</summary><p>No. It is not stuttering, because tmPrepared changed. It is allowed only if it is a <code>TPNext</code> step, namely <code>TMRcvPrepared(r)</code> for a resource manager whose Prepared message is in msgs while tmState is "init".</p></details>
+<h3>Stuttering is not deadlock</h3>
+<p>A deadlock report from TLC is about <code>Next</code> only: a reachable state with no <code>Next</code> successor. Take SimpleProgram from {{lesson:program}}. TLC reports "Deadlock reached" at <code>pc = "done"</code>, as the solid arrows in the figure predict. The dashed loops don't count, even though the formula allows them.</p>
+<!--fig:deadlock-->
+<p>You can silence that report by writing the loop into the next-state formula: <code>Next \/ UNCHANGED vars</code>. TLC then finishes with no error, with 2003 distinct states. Nothing got better, the program still stops there, and a blocked protocol patched this way looks healthy. Likewise, a <em>livelock</em> is endless <code>Next</code> steps with no useful progress, and neither report catches it. Properties that do catch it arrive in {{lesson:fairness}}.</p>
+<h2>Theorems, and checking them</h2>
+<p><code>THEOREM TF</code> asserts that temporal formula TF is true on <em>every</em> possible behavior, not just behaviors of some spec. So implication is the way to talk about a spec:</p>
+<pre><code>THEOREM TPSpec =&gt; []TPTypeOK</code></pre>
+<p>For every behavior, if it satisfies TPSpec, then <code>TPTypeOK</code> holds on all its states. That is what "<code>TPTypeOK</code> is an invariant of TPSpec" means. TLC does not read theorems; they tell your reader what you expect. To check this one, name TPSpec as the behavior spec and <code>[]TPTypeOK</code> as a property. In the Toolbox that is the Properties list. With the VS Code extension or the command line, a <code>.cfg</code> file says the same, and a property must be a defined name, so a small wrapper module adds <code>AlwaysTypeOK == []TPTypeOK</code>:</p>
+<pre><code>SPECIFICATION TPSpec
+CONSTANT RM = {r1, r2, r3}
+INVARIANT TPTypeOK
+PROPERTY AlwaysTypeOK</code></pre>
+<p>On this configuration TLC finds no error: 1146 states generated, 288 distinct, depth 11. Since this is an invariance property, the <code>INVARIANT</code> line alone would be enough. The two lines are the same assertion written at two levels.</p>
+<div class="quiz" data-answer="1" data-explain="An implication with a false left side is true, so a behavior that does not satisfy TPSpec satisfies the implication no matter what its states contain."><fieldset><legend>A behavior starts with tmState = "ouch", so it does not satisfy TPSpec. Is <code>TPSpec =&gt; []TPTypeOK</code> true on it?</legend><label><input type="radio" name="q-temporal" value="0">No, TPTypeOK fails on that state</label><label><input type="radio" name="q-temporal" value="1">Yes, the left side is false</label><label><input type="radio" name="q-temporal" value="2">It has no value, since the behavior is not allowed</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>While you watch</h2>
+<ul>
+<li>Look for how often the lecture reduces a new idea to substitution or to a definition. Pause at the implication example and substitute the other three pairs of values yourself.</li>
+<li>Lamport asks you to ignore the subscript for now. This lesson has already said what it abbreviates; the next part of the lecture and the next lesson say why it must be there.</li>
+<li>The lecture's phrase is "module-closed" and "module-complete" for what this page just calls a complete expression. The lecture's check uses the Toolbox; the <code>.cfg</code> above is the same check.</li>
+</ul>
+<p class="resources"><a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/video/videos.html">Lamport's TLA+ Video Course, lecture 8</a>.</p>

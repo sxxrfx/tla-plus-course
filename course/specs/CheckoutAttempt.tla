@@ -1,0 +1,3 @@
+---- MODULE CheckoutAttempt ----
+EXTENDS CheckoutRetry
+====

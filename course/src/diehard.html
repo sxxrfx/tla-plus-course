@@ -1,0 +1,46 @@
+<h1>Start a spec by writing one correct behavior.</h1>
+<p class="lead">The counter in {{lesson:counter}} had one variable and one kind of step. Now for a real puzzle. To disarm a bomb, the heroes of the 1995 film Die Hard 3 must put exactly 4 gallons of water in a jug, and they have only a 3-gallon jug, a 5-gallon jug, and a faucet.</p>
+<!--fig:behavior-->
+<p>The jugs have no markings, and it must be exactly 4 gallons, not 3.99 or 4.01. Before any formula, Lamport recommends the step in the diagram: write the start of one correct behavior, informally. Follow it from the left. They fill the small jug, pour it into the big one, fill the small jug again, and pour again. The big jug fills up and leaves 1 gallon in the small jug. Then they empty the big jug on the ground, and so on. It doesn't solve the puzzle. It isn't meant to.</p>
+<h2>What one behavior teaches you</h2>
+<p>That single behavior answers the two questions that begin every spec.</p>
+<p><strong>What are the variables?</strong> <code>small</code> and <code>big</code>, the number of gallons in each jug.</p>
+<p><strong>What is a step?</strong> Filling a jug is one step, with no state in between.</p>
+<!--fig:fill-->
+<p>The red states in the bottom row do not exist in this model. Real water passes through 1 and 2 gallons, of course, but that doesn't matter to the problem, and this is the simplest abstraction that does the job. There is a related choice: pouring 4 gallons straight into the big jug is physically possible, but they would need to be very lucky to get exactly 4. So the model allows only behaviors where they always know how much water each jug holds. Real specs are written for a purpose, usually to eliminate some particular kinds of error. Here, the kind that gets you blown up.</p>
+<h2>Beginning the module</h2>
+<pre><code>------------------------------ MODULE DieHard ------------------------------
+EXTENDS Integers
+
+VARIABLES small, big
+
+TypeOK == /\ small \in 0..3
+          /\ big   \in 0..5
+
+Init == /\ big   = 0
+        /\ small = 0</code></pre>
+<p>TLA+ has no type declarations. <strong>Type correctness</strong> means that all variables have sensible values, and it is a good idea to define a formula that says so. Lamport calls it <code>TypeOK</code>. It helps a reader understand the spec, and TLC can check that it is always true. The definition isn't part of the spec: removing it changes nothing about which behaviors are allowed. <code>Init</code> says both jugs start empty.</p>
+<h2>The next-state formula is a list of kinds of step</h2>
+<p>The next-state formula describes all permitted steps. It is usually written as one formula or another, each allowing a different kind of step. The behavior above has three kinds of step, and two jugs give each of them two versions:</p>
+<pre><code>Next == \/ FillSmall
+        \/ FillBig
+        \/ EmptySmall
+        \/ EmptyBig
+        \/ SmallToBig
+        \/ BigToSmall</code></pre>
+<p>Names must be defined before they are used, so the definitions of these six go above <code>Next</code> in the module. {{lesson:actions}} writes them. You already know enough of what they mean to explore.</p>
+<!--fig:fan-->
+<p>Every step in a behavior comes from this choice. In the diagram, the state with 3 gallons in each jug has six options. Four change the state. <code>SmallToBig</code> leads to small 1 and big 5, because only 2 gallons fit. <code>FillSmall</code> and <code>BigToSmall</code> are also allowed but change nothing, since the small jug is already full.</p>
+<div class="lab" id="diehard-lab"><h2>Pour it yourself</h2>
+<p>Save the heroes by hand. Each button is one line of <code>Next</code>. Each circle is a reachable state, labeled <code>small,big</code>; the green-ringed circles have <code>big = 4</code>. Dashed arrows show where a step could go from the current state, and solid ones show your path. Small dots mark combinations that can't be reached. This is a small JavaScript model of the rules, not TLC.</p>
+<div class="controls"><button id="diehard-FillSmall" type="button">FillSmall</button><button id="diehard-FillBig" type="button">FillBig</button><button id="diehard-EmptySmall" type="button">EmptySmall</button><button id="diehard-EmptyBig" type="button">EmptyBig</button><button id="diehard-SmallToBig" type="button">SmallToBig</button><button id="diehard-BigToSmall" type="button">BigToSmall</button></div>
+<div class="controls"><button id="diehard-undo" type="button">Step back</button><button id="diehard-reset" type="button">Restart</button><label><input id="diehard-all" type="checkbox">Show every possible step</label></div>
+<div style="overflow-x:auto"><svg id="diehard-graph" viewBox="0 0 660 300" role="img" aria-label="State graph of the two jugs" style="min-width:520px"></svg></div>
+<p class="status" id="diehard-status" aria-live="polite"></p>
+<div class="readout" id="diehard-trace"></div></div>
+<p>Try to reach a green ring before reading on. Notice two things. Every circle you can reach has a jug that is empty or full, which is why the dots are in the middle of the grid. And you are doing by hand what TLC does in {{lesson:diehard-tlc}}.</p>
+<details class="answer"><summary>Predict: can the state with small 2 and big 2 ever occur?</summary><p>No. It is a dot in the lab. Each of the six kinds of step leaves at least one jug empty or full: filling and emptying do so directly, and a pour stops when the source is empty or the destination is full. Since small 2 and big 2 has neither jug empty or full, no step can produce it.</p></details>
+<div class="quiz" data-answer="1" data-explain="The behavior was written first, and it supplied both the variables and what counts as a step. Formulas come after."><fieldset><legend>What did writing one informal behavior give us?</legend><label><input type="radio" name="q-a-diehard" value="0">A solution to the puzzle</label><label><input type="radio" name="q-a-diehard" value="1">The variables, and what counts as one step</label><label><input type="radio" name="q-a-diehard" value="2">A proof that 4 gallons is reachable</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>While you watch</h2>
+<p>This lesson covers Lecture 4 up to the definition of <code>Next</code>. {{lesson:actions}} continues with <code>FillSmall</code> and the pours, and {{lesson:diehard-tlc}} covers “Saving our heroes” to the end.</p>
+<ul><li>Look for: the struck-out partial fill, and the reason for ruling out the lucky pour. Both are abstraction decisions, and neither is forced by physics.</li><li>Pause when the informal behavior is complete. Extend it by hand for a few more steps before the lecture moves on.</li><li>This lesson adds the fan-out from one state and the stepping lab, which the lecture doesn't have. Use the lab between this video segment and the next.</li></ul>

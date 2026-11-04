@@ -1,0 +1,85 @@
+<h1>A network can be one set that only grows.</h1>
+<p class="lead">In TwoPhase, sending adds a record to <code>msgs</code>, and receiving removes nothing. That choice looks odd, and it's the most reusable modeling idea in lecture 6. This lesson explains why it works, then uses it to model loss, delay, and duplicates without new machinery.</p>
+<!--fig:two-->
+<p>Follow both rows left to right. The top row is the obvious model: <code>msgs</code> is what's in transit, and receiving takes a message out. In the last column r1 has consumed the only <code>Commit</code>, so r2 can never get it. The bottom row is the lecture's: <code>msgs</code> is everything ever sent, and both RMs can read the same record.</p>
+<h2>While you watch</h2>
+<p>Find the part of lecture 6 titled "Sending Messages", and "A Simpler Method" right after it. Then stop at his explanation of <code>TMRcvPrepared</code> and predict what a second receipt of the same message does. Everything after the lecture's two points (one message, many readers; one reader, many receipts) is what this lesson adds.</p>
+<h2>What the spec needs from the network</h2>
+<p>A spec should describe only what the algorithm requires of message passing. Two-phase commit needs no ordering between messages, so a set is enough. Lamport compares two methods:</p>
+<ul><li><strong>Simple:</strong> <code>msgs</code> is the set of messages in transit. Receiving removes one.</li><li><strong>Simpler:</strong> <code>msgs</code> is the set of all messages ever sent. A receive action merely requires the message to be there.</li></ul>
+<p>Here is what TLC finds for both, with three RMs, plus a repaired version of the first.</p>
+<div class="table-wrap"><table><thead><tr><th>Model of <code>msgs</code></th><th>Distinct states</th><th>Can all three RMs commit?</th></tr></thead><tbody><tr><td>Ever sent (the lecture's TwoPhase)</td><td>288</td><td>Yes</td></tr><tr><td>In transit, one <code>Commit</code> record</td><td>265</td><td>No: <code>~\A r : committed</code> holds as an invariant</td></tr><tr><td>In transit, one addressed copy per RM</td><td>415</td><td>Yes: TLC finds the run, 11 states long</td></tr></tbody></table></div>
+<p>The second row is a warning: TLC reports no error on <code>TCConsistent</code>, yet the model can't do its job. It's the kind of success to be suspicious of. The third row works, but it adds a <code>to</code> field and more states. It also says each copy is received at most once, which real networks don't promise.</p>
+<h2>Receiving twice is harmless, here</h2>
+<p>Since a message stays in <code>msgs</code>, <code>TMRcvPrepared(r)</code> stays enabled after it runs. A later step does <code>tmPrepared' = tmPrepared \cup {r}</code> with r already in the set. A set can't contain two copies of r, so nothing changes. A step that leaves every variable unchanged is a <strong>stuttering step</strong>, and it makes no difference; {{lesson:temporal}} explains why such steps are always allowed. This matters because a real process can receive one message twice.</p>
+<!--fig:dup-->
+<p>The set is doing real work. In the diagram, the top row is TwoPhase, and the bottom row is a variant where the TM keeps a count instead and commits when the count reaches the number of RMs. TLC finds a <code>TCConsistent</code> violation in a 7-state trace, with two RMs: r1 prepares, the TM counts r1's message twice, commits, r1 commits, and r2, still working, aborts on its own. A message read twice made one vote look like two.</p>
+<details class="answer"><summary>Predict: does the grow-only set break when the TM's rule is "commit once I've seen any Prepared from r1 and r2"?</summary><p>No, and it's exactly what <code>TMCommit</code> with <code>tmPrepared = RM</code> says. A rule about which messages exist is automatically immune to duplicates. A rule about how many receipts happened isn't.</p></details>
+<h2>Extending the model: the network's freedoms</h2>
+<p>Nothing in <code>msgs</code> forces a process to act on a message. That one fact covers most of what a network can do, as long as you're checking safety (what can happen, not what must).</p>
+<div class="table-wrap"><table><thead><tr><th>Network behavior</th><th>In the grow-only model</th></tr></thead><tbody><tr><td>Delay</td><td>The message sits in <code>msgs</code> while other steps happen</td></tr><tr><td>Reordering</td><td>Any message in the set may be read next</td></tr><tr><td>Duplicate delivery</td><td>The receive action can run again</td></tr><tr><td>Loss</td><td>The receive action never runs for that message</td></tr><tr><td>Timeout and retry</td><td>A new message or attempt; nothing proves the first was lost</td></tr></tbody></table></div>
+<p>A permanently lossy channel still satisfies every safety property, because nothing happens. Saying that something <em>must</em> eventually be delivered is a liveness assumption, the subject of {{lesson:fairness}}. And if an algorithm needs ordering, a set is too weak and you'd use a sequence, as {{lesson:abp}} does.</p>
+<h2>Worked trace: the uncertain checkout response</h2>
+<p>A checkout client sends request r7. The server creates an order, but the reply is lost, and the browser times out.</p>
+<!--fig:checkout-->
+<p>At the X in the diagram the client knows nothing and the server has an order. A timeout only shows no reply arrived in time; it doesn't show the server did nothing. The dashed retry is what makes a double order possible. Here's the model. Attempts are records with both the logical request and the transport attempt:</p>
+<pre><code>------------------------------ MODULE CheckoutRetry ---------------------------
+EXTENDS Integers
+CONSTANTS Attempt,          \* the attempts the client may send for request r7
+          KeyField          \* the message field the server deduplicates on
+VARIABLES
+  msgs,                     \* every attempt ever sent; never shrinks
+  applied,                  \* what the server has recorded as already done
+  orders,                   \* orders the server created
+  replied,                  \* the server has sent a reply
+  client                    \* "waiting" or "knows"
+vars == &lt;&lt;msgs, applied, orders, replied, client&gt;&gt;
+
+CInit == /\ msgs = {} /\ applied = {} /\ orders = 0
+         /\ replied = FALSE /\ client = "waiting"
+
+\* First try, or a retry after a timeout. Nothing forces a reply to come first.
+Send(a) == /\ client = "waiting"
+           /\ [req |-&gt; "r7", try |-&gt; a] \notin msgs
+           /\ msgs' = msgs \cup {[req |-&gt; "r7", try |-&gt; a]}
+           /\ UNCHANGED &lt;&lt;applied, orders, replied, client&gt;&gt;
+
+\* The client learns the result only if it reads a reply.
+Hear == /\ replied
+        /\ client' = "knows"
+        /\ UNCHANGED &lt;&lt;msgs, applied, orders, replied&gt;&gt;
+
+\* Creates an order unless this message's key is recorded. Delivery leaves m
+\* in msgs, so m can be delivered again; one never delivered has been lost.
+Deliver ==
+  \E m \in msgs :
+    /\ m[KeyField] \notin applied
+    /\ orders &lt; 2
+    /\ orders' = orders + 1
+    /\ applied' = applied \cup {m[KeyField]}
+    /\ replied' = TRUE
+    /\ UNCHANGED &lt;&lt;msgs, client&gt;&gt;
+
+\* A repeat of work already done: just send the reply again.
+Repeat ==
+  \E m \in msgs :
+    /\ m[KeyField] \in applied
+    /\ replied' = TRUE
+    /\ UNCHANGED &lt;&lt;msgs, applied, orders, client&gt;&gt;
+
+CNext == \/ \E a \in Attempt : Send(a)
+         \/ Deliver \/ Repeat \/ Hear
+
+OneOrder == orders &lt;= 1
+KnowsTruth == client = "knows" =&gt; orders &gt;= 1
+=============================================================================</code></pre>
+<pre><code>INIT CInit
+NEXT CNext
+CONSTANTS Attempt = {"e1", "e2"}
+          KeyField = "req"
+INVARIANT OneOrder
+INVARIANT KnowsTruth
+CHECK_DEADLOCK FALSE</code></pre>
+<p>The constant <code>KeyField</code> picks what the server deduplicates on. <code>m[KeyField]</code> works because a record is a function. With <code>KeyField = "req"</code>, TLC reports <strong>no error, 10 distinct states</strong>. With <code>KeyField = "try"</code>, <code>OneOrder</code> is violated in 5 states: send e1, send e2, deliver each, two orders. The retry looks like a new purchase because its transport identity is new.</p>
+<details class="answer"><summary>Predict: the client gives every retry a fresh request ID. Is it protected?</summary><p>No. That is the <code>"try"</code> run again: a fresh ID makes each retry a distinct purchase. The ID has to survive the ambiguous response, so it must belong to the customer's intent, not to the attempt.</p></details>
+<div class="quiz" data-answer="1" data-explain="Receive actions only require the message to be in msgs. Never taking that action is indistinguishable from loss, and safety checks consider those behaviors too."><fieldset><legend>In TwoPhase, how is a lost message represented?</legend><label><input type="radio" name="q-messages" value="0">A Drop action removes it from <code>msgs</code></label><label><input type="radio" name="q-messages" value="1">It stays in <code>msgs</code> and nobody ever acts on it</label><label><input type="radio" name="q-messages" value="2">Loss can't be represented without a sequence</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>

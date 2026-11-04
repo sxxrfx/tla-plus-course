@@ -1,0 +1,83 @@
+<h1>Implication runs out when the variables differ.</h1>
+<p class="lead">Implementation as implication, from {{lesson:implementation}}, worked because every variable of the high-level spec also appeared in the low-level one. TwoPhase had <code>rmState</code>, and AB has <code>AVar</code> and <code>BVar</code>. This lesson builds a protocol where that fails for an obvious pair of specs, and collects the two tools needed to repair it, recursion and substitution, in time for {{lesson:refinement}}.</p>
+<!--fig:vars-->
+<h2>Recursive definitions</h2>
+<p>Suppose you want an operator that removes every <code>"X"</code> from a sequence of strings. There's no single formula for the position of each element, as there was for <code>Remove</code>. Define it in terms of itself on a shorter sequence, and declare first that you are doing so:</p>
+<pre><code>RECURSIVE RemoveX(_)
+RemoveX(seq) == IF seq = &lt;&lt;&gt;&gt;
+                  THEN &lt;&lt;&gt;&gt;
+                  ELSE IF Head(seq) = "X"
+                         THEN RemoveX(Tail(seq))
+                         ELSE &lt;&lt;Head(seq)&gt;&gt; \o RemoveX(Tail(seq))</code></pre>
+<!--fig:unfold-->
+<p>The <code>_</code> marks one argument. If you've used a functional language, this will feel natural. Otherwise, reach for it where a program would use a loop. TLC evaluates <code>RemoveX(&lt;&lt;"Tom", "X", "Dick", "Harry", "X"&gt;&gt;)</code> to <code>&lt;&lt;"Tom", "Dick", "Harry"&gt;&gt;</code>.</p>
+<h2>Substitution, and when it's allowed</h2>
+<p>For this lecture only, write <code>f WITH v &lt;- e</code> for f with expression e substituted for symbol v. This is not TLA+ notation. For example, <code>(y^3 - y) WITH y &lt;- x + 2</code> is <code>(x + 2)^3 - (x + 2)</code>. Ordinary math has a basic law, which the lecture calls the Simple Substitution Law:</p>
+<pre><code>THEOREM (v = e) =&gt; (f = (f WITH v &lt;- e))</code></pre>
+<p>It holds for declared constants and constant expressions, the only things ordinary math has. It fails for declared variables. Take <code>f</code> to be <code>y'</code>, <code>v</code> to be y, and <code>e</code> to be <code>x + 2</code>. The law then says <code>(y = x + 2) =&gt; (y' = (x + 2)')</code>: if y = x + 2 holds in the first state, it holds in the second. Run 1 in the figure refutes that. Adding always gives the <strong>Temporal Substitution Law</strong>, which holds when v is a variable and e a state expression:</p>
+<pre><code>THEOREM [](v = e) =&gt; (f = (f WITH v &lt;- e))</code></pre>
+<!--fig:subst-->
+<p>It generalizes to several variables at once, <code>f WITH v1 &lt;- e1, v2 &lt;- e2</code>. The substitutions are simultaneous, not one after the other. You'll use this general form in {{lesson:refinement}}.</p>
+<details class="answer"><summary>Predict: is the simple law true when v is a constant and e a constant expression, even with no always?</summary><p>Yes. Their values don't depend on the state, so <code>v = e</code> is true on the first state exactly when it's true on all of them. <code>[](v = e)</code> says the same as <code>v = e</code>, and the temporal law reduces to the ordinary one.</p></details>
+<h2>The AB2 protocol</h2>
+<p>AB2 is AB with one change. Messages are <em>detectably corrupted</em> instead of lost. A corrupted message is represented by a constant <code>Bad</code>, assumed unequal to any real message, and the action that hurts messages replaces them in place:</p>
+<pre><code>CONSTANTS Data, Bad
+
+ASSUME Bad \notin (Data \X {0, 1}) \cup {0, 1}
+
+VARIABLES AVar, BVar, AtoB2, BtoA2
+
+TypeOK == /\ AVar \in Data \X {0, 1}
+          /\ BVar \in Data \X {0, 1}
+          /\ AtoB2 \in Seq((Data \X {0, 1}) \cup {Bad})
+          /\ BtoA2 \in Seq({0, 1, Bad})
+
+BRcv == /\ AtoB2 # &lt;&lt;&gt;&gt;
+        /\ IF (Head(AtoB2) # Bad) /\ (Head(AtoB2)[2] # BVar[2])
+             THEN BVar' = Head(AtoB2)
+             ELSE BVar' = BVar
+        /\ AtoB2' = Tail(AtoB2)
+        /\ UNCHANGED &lt;&lt;AVar, BtoA2&gt;&gt;
+
+CorruptMsg == /\ \/ /\ \E i \in 1..Len(AtoB2) :
+                         AtoB2' = [AtoB2 EXCEPT ![i] = Bad]
+                    /\ BtoA2' = BtoA2
+                 \/ /\ \E i \in 1..Len(BtoA2) :
+                         BtoA2' = [BtoA2 EXCEPT ![i] = Bad]
+                    /\ AtoB2' = AtoB2
+              /\ UNCHANGED &lt;&lt;AVar, BVar&gt;&gt;</code></pre>
+<p><code>Init</code>, <code>ASnd</code>, and <code>BSnd</code> only rename the channels. <code>ARcv</code> needs no change beyond that: <code>Bad</code> isn't 0 or 1, so the test <code>Head(BtoA2) = AVar[2]</code> is false and A ignores it. <code>BRcv</code> gets a new conjunct, because <code>Head(AtoB2)[2]</code> means nothing when the head is <code>Bad</code>. <code>Next</code> has <code>CorruptMsg</code> where AB had <code>LoseMsg</code>.</p>
+<!--fig:corrupt-->
+<h3>A value for Bad</h3>
+<p>The obvious model sets <code>Bad</code> to the string <code>"Bad"</code>. TLC stops while evaluating the assumption:</p>
+<pre><code>Attempted to check equality of integer 0 with non-integer:
+"Bad"</code></pre>
+<p>You think <code>"Bad"</code> differs from 0, but the semantics of TLA+ don't say so, and TLC won't guess. The answer is a model value, which TLC assumes unequal to any value you'd expect it to differ from. In a cfg file that's <code>CONSTANT Bad = Bad</code>, and the Toolbox has a model value option for it.</p>
+<div class="quiz" data-answer="2" data-explain="ABS needs only AVar and BVar, which AB2 declares, so ordinary implication applies: the same ABS == INSTANCE ABSpec and THEOREM Spec => ABS!Spec as in AB."><fieldset><legend>Which theorem can AB2 state with what you know so far?</legend><label><input type="radio" name="q-impl-general" value="0">That it implements AB, via a plain INSTANCE AB</label><label><input type="radio" name="q-impl-general" value="1">Neither, because its channels differ</label><label><input type="radio" name="q-impl-general" value="2">That it implements ABSpec, as module AB did</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>Checking AB2 against ABSpec</h2>
+<p>As in {{lesson:abp}}, the model needs data values and a state constraint. The lecture uses three values and channel lengths below 4. A smaller instance shows the same thing quickly:</p>
+<pre><code>SPECIFICATION Spec
+CONSTANT Data = {d1, d2}
+CONSTANT Bad = Bad
+CONSTRAINT Bound
+INVARIANT TypeOK
+PROPERTY HighSafety</code></pre>
+<p>With <code>Bound</code> limiting both channels to length 2, and <code>HighSafety</code> naming <code>ABS!Spec</code> in a wrapper module, TLC finds no error: 6926 states generated, 1008 distinct, depth 16.</p>
+<h2>Liveness needs something imaginary</h2>
+<p>Copy AB's <code>FairSpec</code> onto AB2 and check it against <code>ABS!FairSpec</code>. TLC reports a violation:</p>
+<!--fig:loop-->
+<p>Strong fairness can't help, since <code>ARcv</code> steps do occur. Each one just receives <code>Bad</code>. Lamport says he believes fairness on subactions of <code>Next</code> can't guarantee that any message is received before it's corrupted. So the safety spec has to change. The idea is that sending a message also decides whether it may ever be corrupted.</p>
+<!--fig:good-->
+<p>These flags are <strong>imaginary variables</strong>: not meant to be implemented, used only to state fairness. Choosing in advance doesn't change what AB2's own variables can do, so ignoring <code>AtoBgood</code> and <code>BtoAgood</code>, <code>SpecP</code> and <code>Spec</code> allow the same behaviors. Lamport's module AB2P extends AB2 this way. What follows is this course's own version, written to test the idea, and it may differ from his download. Corruption requires a false flag, and weak fairness applies to the receives and to sending a <em>good</em> message:</p>
+<pre><code>FairSpecP == SpecP /\ WF_varsP(ARcvP) /\ WF_varsP(BRcvP)
+                   /\ WF_varsP(SndA(TRUE)) /\ WF_varsP(SndB(TRUE))</code></pre>
+<p>On the same bound, TLC finds no error against <code>ABS!FairSpec</code> and against AB2's <code>Spec</code>, with 4212 distinct states. Requiring only that <em>some</em> message keeps being sent, whether good or not, brings the violation back.</p>
+<details class="answer"><summary>Predict: AB needed strong fairness on its receives. Why does weak fairness suffice for ARcvP and BRcvP here?</summary><p>Corruption doesn't remove messages. Once a channel is non-empty, only a receive can empty it, so the receive stays continuously enabled, and there's no flicker for strong fairness to handle.</p></details>
+<p>The question from the top of the page is still open: AB2 clearly behaves like AB, yet <code>AtoB</code> and <code>BtoA</code> don't exist in it. {{lesson:refinement}} says what "implements" means in that case.</p>
+<h2>While you watch</h2>
+<ul>
+<li>This is the first part of the lecture. Run the model with the string <code>"Bad"</code> first, so you see the error he describes, then change to a model value.</li>
+<li>Pause at the <code>TypeOK</code> line for <code>AtoB2</code> when he asks you to, and read the set out loud.</li>
+<li>He leaves AB2P for you to read. His version is the reference.</li>
+</ul>
+<p class="resources"><a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/video/videos.html">Lamport's TLA+ Video Course, lecture 10</a>.</p>

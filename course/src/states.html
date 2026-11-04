@@ -1,0 +1,43 @@
+<h1>A system is a graph of possibilities.</h1>
+<p class="lead">{{lesson:why}} said TLA+ checks conditions on individual executions. To do that, an execution has to be something precise. Here it becomes a sequence of states, and a whole system becomes a state machine that allows many such sequences.</p>
+<!--fig:runs-->
+<p>The diagram shows two executions of the small C program you will meet below, drawn the way TLA+ sees them. Three words define that view: an execution is a <em>sequence</em> of <em>discrete</em> <em>steps</em>.</p>
+<h2>Discrete, sequence, step</h2>
+<p><strong>Discrete.</strong> A digital system is a physical system whose continuous evolution we can abstract as separate events. Lamport's example is the first self-powered digital system, the escapement clock: its parts move continuously, but we can describe it as an abstract clock advancing in ticks. A computer running a program is the same kind of abstraction.</p>
+<p><strong>Sequence.</strong> It may seem odd to describe a concurrent system, where several things happen at once, as one sequence. It is clearly possible, since a sequential program can simulate a concurrent system. As the course goes on, you will see that it also works well.</p>
+<p><strong>Step.</strong> A <strong>state</strong> is an assignment of values to variables. A <strong>step</strong> is the change from one state to the next. A <strong>behavior</strong> is a sequence of states. So in the diagram, run 1 and run 2 are two behaviors, each with three states and two steps.</p>
+<h2>State machines</h2>
+<p>You want to describe <em>all</em> possible behaviors of a system, not just one. Programming languages, Turing machines, automata, and hardware description languages can all do that. TLA+ uses the abstraction underneath all of them, a <strong>state machine</strong>, which you describe by saying three things:</p>
+<ol start="0"><li>What the variables are.</li><li>Their possible initial values.</li><li>The relation between their values in the current state and their possible values in the next state.</li></ol>
+<p>A state machine <strong>halts</strong> if it reaches a state with no possible next state.</p>
+<h2>A tiny example, and the problem it exposes</h2>
+<pre><code>int i;
+void main()
+{ i = someNumber();
+  i = i + 1;
+}</code></pre>
+<p>Assume <code>someNumber()</code> returns an arbitrary number from 0 to 1000, possibly different on each execution. C initializes <code>i</code> to 0. The obvious model has one variable, <code>i</code>, with one initial value, 0. Now try to write item 2. What can follow <code>i: 43</code>?</p>
+<!--fig:conflict-->
+<p>Follow the red state in the diagram. In run 1, the call returned 42 and the increment produced 43, so the program has finished: there is no next value. In run 2, the call returned 43, so the next value must be 44. The same current state needs two incompatible rules. So this program can't be described as a state machine with <code>i</code> alone.</p>
+<p>The missing part of the state says which statement runs next. It is called the <strong>control state</strong>, and we represent it with a second variable, <code>pc</code>, for program control. <code>pc</code> equal to <code>"start"</code> means the first assignment is next, <code>"middle"</code> means the second is next, and <code>"done"</code> means execution has finished.</p>
+<!--fig:pcgraph-->
+<p>In the diagram, there are now two distinct states with <code>i: 43</code>, and each has its own rule. The relation can be stated, for now in English:</p>
+<pre><code>if current value of pc equals "start"
+  then next value of i in {0, 1, ..., 1000}
+       next value of pc equals "middle"
+  else if current value of pc equals "middle"
+         then next value of i equals current value of i + 1
+              next value of pc equals "done"
+         else no next values</code></pre>
+<p>That is awkward to read, and {{lesson:program}} turns it into a formula. But notice what has already been gained. A program represents parts of its state differently because they are implemented differently: variables, control state, call stack, heap. A state machine represents every part the same way, as values of variables. Those implementation details are gone, and you have one simple abstraction.</p>
+<div class="quiz" data-answer="1" data-explain="The state i: 43 would need no next state in one run and i: 44 in another. Adding pc separates those into two states."><fieldset><legend>Why does the model with only variable i fail?</legend><label><input type="radio" name="q-a-states" value="0">i can take too many values</label><label><input type="radio" name="q-a-states" value="1">The same state would need different next states in different runs</label><label><input type="radio" name="q-a-states" value="2">C has no way to describe i</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>Worked app example: a login screen</h2>
+<p>The same idea applies far from C. Model a login screen with a variable <code>phase</code>, whose values are idle, submitting, signedIn, and failed, and a variable for the request being processed.</p>
+<!--fig:login-->
+<p>From submitting, the diagram has two arrows. They are alternative next states, and any one behavior takes just one of them. To practice, draw the graph without code, put concrete values in each node, and name each arrow. Then invent a transition that should be impossible, like the dashed one from failed straight to signedIn. A graph is useful only if its rules exclude that arrow.</p>
+<p>Now suppose a developer stores both <code>phase</code> and <code>isLoading</code>. The combination signedIn with isLoading true becomes representable, although it should never occur. A spinner is derived from phase equal to submitting, so unless it can really vary on its own, leave it out of the model. A state with fewer independent variables is easier to reason about.</p>
+<details class="answer"><summary>Predict: are <code>x = 1, y = 2</code> and <code>x = 1, y = 3</code> the same state?</summary><p>No, if both x and y are variables of the model. If you deliberately leave y out, those two situations become one state. What you choose to model decides which differences exist. In the C example, adding <code>pc</code> did the reverse: it split one state into two.</p></details>
+<details class="answer"><summary>Predict: does a disabled Submit button mean the machine has no arrow from idle to submitting?</summary><p>Only if the button is the only trigger. If a programmatic retry or another event can start a login, the arrow exists regardless of the button. Model what can actually happen, not what one control suggests.</p></details>
+<h2>While you watch</h2>
+<p>This lesson covers Lecture 1 from “The basic abstraction” to the end. {{lesson:why}} covers the earlier part.</p>
+<ul><li>Look for: the three items that describe a state machine, and how “state” is defined exactly as it is in other sciences.</li><li>Pause when the lecture asks what can follow 43 and before <code>pc</code> appears. Try to find a rule for it, and watch it fail.</li><li>After the English relation appears, pause and draw the graph yourself for <code>someNumber()</code> returning only 0 or 1.</li><li>This lesson adds the state graph, which later lessons use constantly, and the login example.</li></ul>

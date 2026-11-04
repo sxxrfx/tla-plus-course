@@ -1,0 +1,145 @@
+<h1>A late cache fill can undo an invalidation.</h1>
+<p class="lead">An asynchronous read can finish after the data changed. Model the in-flight result as state; otherwise a stale-fill race is invisible.</p>
+<p>This builds on {{lesson:app-state}}, where a late response overwrote a newer choice, and on {{lesson:inventory}}, where a check went stale before the action it guarded. Here the late response lands in a store that many readers trust, so it outlives the screen.</p>
+<h2>The concrete app</h2>
+<p>A shopping app caches a product’s price. A miss starts a database read. While that read is in flight, an administrator updates the price and invalidates the cache. The old read then returns and repopulates the cache.</p>
+<!--fig:race-->
+<p>In the chart, the writer’s two arrows are correct. The red arrow comes later and restores the old value. This can happen in one process when tasks interleave around await, or across several servers. A single-threaded event loop does not make a whole asynchronous operation atomic, so track BeginFill and FinishFill separately rather than drawing one instantaneous “read and cache” arrow.</p>
+<h2>Choose the exact contract</h2>
+<p>The property below is deliberately strong: whenever the cache is marked valid, its contents belong to the current source version. Version tags stand for payload identity. An invalid cache may hold old bytes because callers must not use them, so the predicate is conditional on <code>valid</code>.</p>
+<p>The model assumes one authoritative source, increasing versions, one in-flight fill, and at most two writes. <strong>Write plus invalidation is one atomic action</strong> here, and so are the freshness check and publication. These are explicit abstraction boundaries, not guarantees that an ordinary database and remote cache provide. Later in this lesson you will break both.</p>
+<div class="lab" id="cache-lab"><h2>Race a fill against invalidation</h2><div class="controls"><label><input type="checkbox" id="cache-guard" checked>Check the version before publishing</label><button type="button" id="cache-begin">Begin fill</button><button type="button" id="cache-write">Write &amp; invalidate</button><button type="button" id="cache-finish">Finish fill</button><button type="button" id="cache-reset">Restart</button></div><div class="flow"><span class="node">Source<small id="cache-source"></small></span><span class="arrow">→</span><span class="node">In-flight fill<small id="cache-flight"></small></span><span class="arrow">→</span><span class="node">Cache<small id="cache-value"></small></span></div><div class="readout" id="cache-log" aria-live="polite"></div></div>
+<h2>Complete bounded model: Cache.tla</h2>
+<pre><code>---------------- MODULE Cache ----------------
+EXTENDS Naturals
+CONSTANT Fence
+ASSUME Fence \in BOOLEAN
+VARIABLES sourceVersion, cacheVersion, valid, loading, fillVersion
+vars == &lt;&lt;sourceVersion, cacheVersion, valid, loading, fillVersion&gt;&gt;
+
+Init == /\ sourceVersion = 0
+        /\ cacheVersion = 0
+        /\ valid = FALSE
+        /\ loading = FALSE
+        /\ fillVersion = 0
+
+BeginFill ==
+    /\ ~loading /\ ~valid
+    /\ loading' = TRUE
+    /\ fillVersion' = sourceVersion
+    /\ UNCHANGED &lt;&lt;sourceVersion, cacheVersion, valid&gt;&gt;
+
+WriteAndInvalidate ==
+    /\ sourceVersion &lt; 2
+    /\ sourceVersion' = sourceVersion + 1
+    /\ valid' = FALSE
+    /\ UNCHANGED &lt;&lt;cacheVersion, loading, fillVersion&gt;&gt;
+
+FinishFill ==
+    /\ loading
+    /\ loading' = FALSE
+    /\ IF ~Fence \/ fillVersion = sourceVersion
+          THEN /\ cacheVersion' = fillVersion
+               /\ valid' = TRUE
+          ELSE UNCHANGED &lt;&lt;cacheVersion, valid&gt;&gt;
+    /\ UNCHANGED &lt;&lt;sourceVersion, fillVersion&gt;&gt;
+
+Next == BeginFill \/ WriteAndInvalidate \/ FinishFill
+Spec == Init /\ [][Next]_vars
+
+TypeOK == /\ sourceVersion \in 0..2
+          /\ cacheVersion \in 0..2
+          /\ fillVersion \in 0..2
+          /\ valid \in BOOLEAN
+          /\ loading \in BOOLEAN
+FreshWhenValid == valid =&gt; cacheVersion = sourceVersion
+================================================</code></pre>
+<h2>Run both designs</h2>
+<p>Use this configuration as <code>Cache.cfg</code>. TLC explores all reachable states for these fixed bounds. The browser course does not evaluate this code.</p>
+<pre><code>SPECIFICATION Spec
+CONSTANT Fence = TRUE
+INVARIANT TypeOK
+INVARIANT FreshWhenValid
+CHECK_DEADLOCK FALSE</code></pre>
+<p>With <code>Fence = TRUE</code>, TLC completes with <strong>15 distinct states and 20 generated</strong>, with both invariants holding. Change only the constant to <code>Fence = FALSE</code>, and TLC reports <code>FreshWhenValid</code> violated.</p>
+<h2>Read the counterexample</h2>
+<!--fig:bad-->
+<p>Read the grid by columns. BeginFill copies version 0 into <code>fillVersion</code>; this is the old response waiting to complete. The write advances the source to 1 while <code>fillVersion</code> stays at 0, because it is a copy. FinishFill without a fence then sets <code>cacheVersion</code> to 0 and <code>valid</code> to TRUE, with the source at 1.</p>
+<!--fig:branch-->
+<p>In the fenced design, FinishFill sees that <code>fillVersion</code> differs from <code>sourceVersion</code>, discards the result, and clears <code>loading</code>. A later BeginFill captures version 1. Safety does not require every fill to succeed. This model also proves no response deadline: writes or scheduling can keep useful completion from occurring.</p>
+<div class="quiz" data-answer="0" data-explain="FreshWhenValid is conditional on valid. Discarding the fill leaves valid FALSE, which the property allows, and a later fill can restore availability."><fieldset><legend>The fence discards a fill, so the next read misses again. Is that a violation of FreshWhenValid?</legend><label><input type="radio" name="q-cache" value="0">No; an invalid cache is allowed</label><label><input type="radio" name="q-cache" value="1">Yes; the cache must always be current</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<h2>Break the two atomic boundaries</h2>
+<p>A generation counter serves a similar purpose in real caches: capture a generation before fetching, increment it when invalidating, publish only if it has not changed. The modeling question is whether compare-and-publish and write-and-invalidate are truly one step. The module <code>CacheSplit</code> below makes each optional. With neither split, it matches <code>Cache</code> exactly: 15 distinct states, 20 generated. Each split alone fails.</p>
+<details class="answer"><summary>Mutation exercise: split the fence check from publication. What extra state is necessary, and does the fence still help?</summary><p>You need a phase recording “checked,” here <code>fill = "checked"</code>. The fence no longer helps: TLC’s 5-state trace appears below, where the check passes and a write then lands before the install. Restore an atomic conditional publication, or make invalidation also cancel previously authorized fills.</p></details>
+<!--fig:split-->
+<details class="answer"><summary>Predict: the fence stays atomic, but the database write and the invalidation are two separate steps. Does the invariant hold?</summary><p>No. TLC’s trace is BeginFill, FinishFill, Write: a valid version 0 is in the cache when the source moves to 1, before the invalidation runs. This has nothing to do with the fill race. Either strengthen coordination or state a weaker contract, such as bounded staleness or freshness after a completed invalidation.</p></details>
+<details class="answer"><summary>The full CacheSplit module</summary>
+<pre><code>---------------- MODULE CacheSplit ----------------
+EXTENDS Naturals
+CONSTANTS SplitCheck, SplitInvalidate
+ASSUME SplitCheck \in BOOLEAN /\ SplitInvalidate \in BOOLEAN
+VARIABLES sourceVersion, cacheVersion, valid, fill, fillVersion, wrote
+vars == &lt;&lt;sourceVersion, cacheVersion, valid, fill, fillVersion, wrote&gt;&gt;
+\* fill: "none", "loading", or "checked". The check is always fenced here.
+\* wrote: TRUE between a source write and its separate invalidation.
+
+Init == /\ sourceVersion = 0
+        /\ cacheVersion = 0
+        /\ valid = FALSE
+        /\ fill = "none"
+        /\ fillVersion = 0
+        /\ wrote = FALSE
+
+BeginFill ==
+    /\ fill = "none" /\ ~valid
+    /\ fill' = "loading"
+    /\ fillVersion' = sourceVersion
+    /\ UNCHANGED &lt;&lt;sourceVersion, cacheVersion, valid, wrote&gt;&gt;
+
+\* The write and its invalidation, in one step or two.
+Write ==
+    /\ sourceVersion &lt; 2 /\ ~wrote
+    /\ sourceVersion' = sourceVersion + 1
+    /\ IF SplitInvalidate
+          THEN wrote' = TRUE /\ UNCHANGED valid
+          ELSE valid' = FALSE /\ UNCHANGED wrote
+    /\ UNCHANGED &lt;&lt;cacheVersion, fill, fillVersion&gt;&gt;
+Invalidate ==
+    /\ wrote
+    /\ wrote' = FALSE
+    /\ valid' = FALSE
+    /\ UNCHANGED &lt;&lt;sourceVersion, cacheVersion, fill, fillVersion&gt;&gt;
+
+Publish ==
+    /\ cacheVersion' = fillVersion
+    /\ valid' = TRUE
+    /\ fill' = "none"
+    /\ UNCHANGED &lt;&lt;sourceVersion, fillVersion, wrote&gt;&gt;
+
+\* The fence check and the publication, in one step or two.
+FinishFill ==
+    /\ fill = "loading" /\ ~SplitCheck
+    /\ IF fillVersion = sourceVersion
+          THEN Publish
+          ELSE /\ fill' = "none"
+               /\ UNCHANGED &lt;&lt;sourceVersion, cacheVersion, valid,
+                              fillVersion, wrote&gt;&gt;
+CheckFence ==
+    /\ fill = "loading" /\ SplitCheck
+    /\ fill' = IF fillVersion = sourceVersion THEN "checked" ELSE "none"
+    /\ UNCHANGED &lt;&lt;sourceVersion, cacheVersion, valid, fillVersion, wrote&gt;&gt;
+Install == fill = "checked" /\ Publish
+
+Next == BeginFill \/ Write \/ Invalidate \/ FinishFill \/ CheckFence \/ Install
+Spec == Init /\ [][Next]_vars
+FreshWhenValid == valid =&gt; cacheVersion = sourceVersion
+===================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANTS SplitCheck = FALSE
+          SplitInvalidate = FALSE
+INVARIANT FreshWhenValid
+CHECK_DEADLOCK FALSE</code></pre>
+</details>
+<p>Avoid reusing generations while old fills remain outstanding, or an old generation can appear current again. And do not describe this small model as proof of a replicated cache protocol.</p>
+<details class="answer"><summary>Predict: a 60-second TTL makes every cached read current. Is that true?</summary><p>No. TTL can limit how long an entry is used under suitable clock and refresh assumptions; it does not prevent returning an old value during its lifetime. Delayed fills can also begin a new lifetime for an old result unless their version or generation is checked. “Current” and “not older than a chosen bound” are different contracts.</p></details>
+<p class="resources">Further study: the caching-memory example in <a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/tla/book.html">Specifying Systems</a> develops a different, richer cache architecture. Compare its stated contract and abstraction boundaries instead of assuming every cache has this lesson’s semantics.</p>

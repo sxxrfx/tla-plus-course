@@ -1,0 +1,74 @@
+<h1>Write an algorithm; inspect its translation.</h1>
+<p class="lead">In {{lesson:program}} you turned a small program into a state machine by hand, with a control variable <code>pc</code> saying what runs next. PlusCal does that translation for you. You still decide what one step is, as you just did in {{lesson:inventory}}.</p>
+<!--fig:tick-->
+<p><strong>PlusCal</strong> is an algorithm language written inside a comment in a TLA+ module. Its translator generates ordinary TLA+ after the comment: <code>Init</code>, <code>Next</code>, <code>Spec</code>, and a <code>pc</code> function for processes. The language is convenient for algorithms that read as sequential steps. It does not replace the state machine, and the diagram above is the state machine you get from the source below.</p>
+<pre><code>---------------- MODULE TicketPC ----------------
+EXTENDS Integers, FiniteSets
+CONSTANT Buyers
+(*--algorithm Ticket
+variables remaining = 1, booked = {};
+define
+    Safe == Cardinality(booked) &lt;= 1
+end define;
+process Buyer \in Buyers
+begin
+Reserve:
+    if remaining &gt; 0 then
+        remaining := remaining - 1;
+        booked := booked \cup {self};
+    end if;
+end process;
+end algorithm; *)
+=================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANT Buyers = {A, B}
+INVARIANT Safe</code></pre>
+<p>That is the source before translation. To translate, run <code>java -cp tla2tools.jar pcal.trans -nocfg TicketPC.tla</code> or use your editor’s translate command. <code>-nocfg</code> keeps the translator from writing its own config file over yours. The generated text appears between translation markers before the closing line. TLC then finds 5 distinct states and no error.</p>
+<p><code>self</code> identifies the current process. Each label starts an atomic step, and everything up to the next label runs in that one step. So the <code>if</code> and both assignments under <code>Reserve</code> are one edge in the diagram. Inside a step, <code>:=</code> runs in order, so a later statement sees an earlier statement’s value. Do not confuse this with the simultaneous primed equations in raw TLA+.</p>
+<h2>Move a label, change the model</h2>
+<p>Add one label, <code>Take:</code>, in front of the decrement, and rename the first label <code>Check</code>. The translator now produces two actions for each buyer. This is its real output for that change:</p>
+<pre><code>Check(self) == /\ pc[self] = "Check"
+               /\ IF remaining &gt; 0
+                     THEN /\ pc' = [pc EXCEPT ![self] = "Take"]
+                     ELSE /\ pc' = [pc EXCEPT ![self] = "Done"]
+               /\ UNCHANGED &lt;&lt; remaining, booked &gt;&gt;
+Take(self) == /\ pc[self] = "Take"
+              /\ remaining' = remaining - 1
+              /\ booked' = (booked \cup {self})
+              /\ pc' = [pc EXCEPT ![self] = "Done"]</code></pre>
+<!--fig:flow-->
+<p>The diagram is <code>pc[self]</code> for one buyer. You could have written this translation yourself: it is the same pattern as {{lesson:program}}. Between the two actions, the other buyer can run, so TLC now reports <code>Safe</code> violated after 4 steps, the same race as <code>InventorySplit</code>. When reading an error trace, look at <code>pc</code> first. It tells you which labeled step each process is about to run.</p>
+<p>Three more statements cover most algorithms. <code>await P</code> blocks a step until P holds, but does not promise P ever will. <code>either … or …</code> is a choice among alternatives. <code>with x \in S do …</code> picks a value nondeterministically. Each of these translates into guards and existential quantifiers you already know.</p>
+<details class="answer"><summary>Predict: where does the deadlock go when both buyers finish?</summary><p>Nowhere. The translator adds a <code>Terminating</code> action that stutters once every process is at <code>Done</code>, so TLC does not report termination as deadlock. A process stuck on an <code>await</code> is still reported.</p></details>
+<h2>Worked interleaving: two event handlers increment a count</h2>
+<p>Consider two workers that each read a shared notification count, compute one more, and write it back. In a single JavaScript event loop, a synchronous increment has no await inside it. But reading the value, awaiting remote work, and later writing the captured value does let another handler intervene. So it gets two labels, and the captured value becomes a per-process variable.</p>
+<pre><code>---------------- MODULE LostUpdate ----------------
+EXTENDS Naturals
+CONSTANT Workers
+(*--algorithm LostUpdate
+variables count = 0;
+define
+    AllDone == \A w \in Workers: pc[w] = "Done"
+    NoLostUpdate == AllDone =&gt; count = 2
+end define;
+process Worker \in Workers
+variable local = 0;
+begin
+Read:
+    local := count;
+Write:
+    count := local + 1;
+end process;
+end algorithm; *)
+===================================================</code></pre>
+<pre><code>SPECIFICATION Spec
+CONSTANT Workers = {A, B}
+INVARIANT NoLostUpdate</code></pre>
+<!--fig:lost-->
+<p>Read the graph from the left. If one worker gets both of its steps in before the other reads, the top and bottom paths, the count reaches 2. If both read first, the middle node, both write 1. TLC finds the 13 states and reports <code>NoLostUpdate</code> violated.</p>
+<!--fig:trace-->
+<p>For an atomic abstraction, replace the two labels with one, <code>Increment: count := count + 1;</code>. TLC then finds 4 states and no error. This is correct only if the actual operation has that guarantee, such as a synchronous local update or a suitable atomic database update.</p>
+<p>To find a real async boundary, annotate the implementation: what is captured before an await, what can change during the wait, and what is rechecked after it? Captured values become local variables. Each interaction point becomes a label. A familiar callback race is now a state machine.</p>
+<details class="answer"><summary>Predict: will making the whole process fair repair the lost update?</summary><p>No. PlusCal’s <code>fair process</code> asks for the fairness from {{lesson:fairness}}. With it, TLC confirms <code>&lt;&gt;AllDone</code>: both workers do finish. But <code>NoLostUpdate</code> still fails in the same 13-state graph. Fairness rules out stopping early. It removes no order of steps, and this is a safety failure.</p></details>
+<div class="quiz" data-answer="0" data-explain="A label starts a new atomic step. Removing one merges steps and removes the states in between; adding one creates them."><fieldset><legend>What does adding a label do to a PlusCal model?</legend><label><input type="radio" name="q-pluscal" value="0">Splits one atomic step in two, so other processes can run between them</label><label><input type="radio" name="q-pluscal" value="1">Only names a line for error traces</label><label><input type="radio" name="q-pluscal" value="2">Makes the process fair</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<p class="resources"><a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/tla/tutorial/home.html">Lamport’s PlusCal tutorial</a> teaches both algorithm structure and model checking.</p>

@@ -1,0 +1,3 @@
+---- MODULE PriceQuorumOne ----
+EXTENDS PriceQuorum
+====

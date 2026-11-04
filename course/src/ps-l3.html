@@ -1,0 +1,397 @@
+<h1>Problem set 3: run TLC and read what it tells you.</h1>
+<p class="lead">These problems practice Lecture 3: writing a module and its config file, running TLC, reading “distinct states found,” checking invariants, reading an error trace backward, and telling deadlock from termination. They draw on {{ref:tools}} and {{ref:counter}}, and the last problem checks a model from {{ref:ps-l2}}.</p>
+<p>Every module here has been run through TLC, and every number in a checked answer is one TLC printed. Commands are in the command-line form from {{ref:tools}}, <code>java -cp tla2tools.jar tlc2.TLC -config Name.cfg Name</code>. In the Toolbox you enter the same things on the model's Overview page, and the VS Code extension reads the same <code>.cfg</code> file. Remember that the module name must match the file name.</p>
+
+<article class="problem" id="ps-l3-ratelimit">
+<p class="problem-meta"><span>Problem 1</span><span class="level" title="Difficulty 1 of 3">●○○</span><span class="domain">API gateway</span></p>
+<h2>Does a fixed-window rate limiter keep its promise?</h2>
+<p class="uses">Draws on {{ref:logic}} and {{ref:counter}}.</p>
+<p>An API gateway lets each client make 3 requests per minute. It uses a <em>fixed window</em>: a counter per client that resets when each minute starts on the clock, and a request is rejected when the counter is already at the limit. The product team has told the backend team: “a client never gets more than 3 requests through in any 60 seconds.”</p>
+<p>To see time inside a minute, the model splits each minute into two halves. <code>half</code> is 1 or 2, the half of the current minute it is now. <code>a1</code> and <code>a2</code> count the requests accepted in the first and second half of the current minute, and <code>p2</code> counts those accepted in the second half of the previous minute. Here is the module without its accept steps:</p>
+<pre><code>----------------- MODULE PSl3_RateLimit -----------------
+EXTENDS Integers
+VARIABLES half, a1, a2, p2
+
+Limit == 3
+
+Init == /\ half = 1
+        /\ a1 = 0
+        /\ a2 = 0
+        /\ p2 = 0
+
+Tick == \/ /\ half = 1
+           /\ half' = 2
+           /\ a1' = a1
+           /\ a2' = a2
+           /\ p2' = p2
+        \/ /\ half = 2
+           /\ half' = 1
+           /\ p2' = a2
+           /\ a1' = 0
+           /\ a2' = 0
+
+\* AcceptFirst, AcceptSecond and Next: yours to write
+=========================================================</code></pre>
+<p><code>Tick</code> moves time forward half a minute. At the end of a minute it saves the second half's count in <code>p2</code> and resets the window. A rejected request changes nothing, so it needs no case. The figure shows which spans of time the counters cover.</p>
+<!--fig:windows-->
+<ol class="tasks">
+<li>Write <code>AcceptFirst</code> and <code>AcceptSecond</code>: in the half it is now, a request is accepted when the window's total <code>a1 + a2</code> is below <code>Limit</code>. Then define <code>Next</code>.</li>
+<li>Define <code>WindowOK</code>, “the current window never holds more than <code>Limit</code> accepted requests.” Save the module as <code>PSl3_RateLimit.tla</code> with a config <code>PSl3_RateLimit.cfg</code> containing <code>INIT Init</code>, <code>NEXT Next</code> and <code>INVARIANT WindowOK</code>, and run TLC. How many distinct states does it find? Why does it report no deadlock?</li>
+<li>The promise talks about <em>any</em> 60 seconds, including the span from the middle of the previous minute to the middle of this one. Define <code>SlidingOK == p2 + a1 =&lt; Limit</code>, add a second <code>INVARIANT</code> line, and run again. Retell TLC's trace as a story with clock times.</li>
+<li>Is the gateway wrong, or the promise? Say what the fixed window really guarantees.</li>
+</ol>
+<div class="numcheck" data-answer="56|fifty-six|fiftysix" data-explain="In the first half, a2 is 0, so there are 4 values of a1 times 4 of p2: 16 states. In the second half, the pairs (a1, a2) with a1 + a2 =&lt; 3 number 10, times 4 values of p2: 40. 16 + 40 = 56." data-retry="If your count differs, compare your accept steps with the solution: each must keep every other variable unchanged, and only the current half's counter may grow."><label>Distinct states found with <code>WindowOK</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="7|seven" data-explain="SlidingOK needs 4 accepted requests (p2 + a1 = 4), which takes 4 steps, and the counts have to be in different halves of different minutes, which takes 2 Ticks. 6 steps make 7 states, and that is the trace TLC prints." data-retry="Count the steps the violation needs: how many accepts, and how many Ticks to get the accepts into the right halves?"><label>Number of states in the shortest behavior that violates <code>SlidingOK</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>Each accept case needs three kinds of line: the guard (which half it is, and room in the window), the counter that grows, and <code>x' = x</code> for the other three variables. For the deadlock question, look for a case whose guard is true in every state.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<pre><code>----------------- MODULE PSl3_RateLimit -----------------
+EXTENDS Integers
+VARIABLES half, a1, a2, p2
+
+Limit == 3
+
+Init == /\ half = 1
+        /\ a1 = 0
+        /\ a2 = 0
+        /\ p2 = 0
+
+AcceptFirst  == /\ half = 1
+                /\ a1 + a2 &lt; Limit
+                /\ a1' = a1 + 1
+                /\ a2' = a2
+                /\ p2' = p2
+                /\ half' = half
+
+AcceptSecond == /\ half = 2
+                /\ a1 + a2 &lt; Limit
+                /\ a2' = a2 + 1
+                /\ a1' = a1
+                /\ p2' = p2
+                /\ half' = half
+
+Tick == \/ /\ half = 1
+           /\ half' = 2
+           /\ a1' = a1
+           /\ a2' = a2
+           /\ p2' = p2
+        \/ /\ half = 2
+           /\ half' = 1
+           /\ p2' = a2
+           /\ a1' = 0
+           /\ a2' = 0
+
+Next == AcceptFirst \/ AcceptSecond \/ Tick
+
+WindowOK  == a1 + a2 =&lt; Limit
+SlidingOK == p2 + a1 =&lt; Limit
+=========================================================</code></pre>
+<p><strong>(b)</strong> TLC reports <code>Model checking completed. No error has been found.</code> and <code>56 distinct states found</code>. You can account for the number: when <code>half = 1</code>, <code>a2</code> is 0 and <code>a1</code> and <code>p2</code> each range over 0..3, giving 16 states; when <code>half = 2</code>, there are 10 pairs of <code>a1</code> and <code>a2</code> with a sum of at most 3, and 4 values of <code>p2</code>, giving 40. There is no deadlock because <code>Tick</code> has a case for each value of <code>half</code>, so some step is always possible. That is right for a model of time.</p>
+<p><strong>(c)</strong> TLC reports <code>Invariant SlidingOK is violated.</code> with this 7-state trace:</p>
+<!--fig:ratelimit-trace-->
+<p>As a story: from 10:00:00 to 10:00:30 the client is quiet. At 10:00:40 and 10:00:50 it sends two requests, both accepted. At 10:01:00 the window resets. At 10:01:05 and 10:01:10 it sends two more, both accepted, since the new window is empty. That is 4 requests in 30 seconds, against a promise of 3 per 60 seconds. Four accepts and two ticks can't be done in fewer steps, so 7 states is the shortest possible behavior.</p>
+<p><strong>(d)</strong> The gateway does what a fixed window does: at most <code>Limit</code> accepted requests per clock minute, which is <code>WindowOK</code>. Near a boundary a client can get up to twice the limit in a short span: 3 just before the minute and 3 just after. To see it, change the bound in <code>SlidingOK</code> to 5; TLC then prints a 9-state behavior ending with <code>p2 = 3</code> and <code>a1 = 3</code>. Either the promise should say “per clock minute,” or the gateway needs an algorithm that tracks a moving 60 seconds, such as a sliding-window log of request times. Which to choose is a product decision; the model makes the difference precise.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l3-workers">
+<p class="problem-meta"><span>Problem 2</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Concurrency</span></p>
+<h2>Read a TLC trace backward to find a double release</h2>
+<p class="uses">Draws on {{ref:logic}} and {{ref:counter}}.</p>
+<p>A thumbnail service runs image-resize jobs, at most 2 at a time because each job needs a lot of memory. A semaphore with 2 permits enforces this: a worker takes a permit before starting a job and gives it back when the job ends. The code that ends a job calls <code>release()</code> in its error handler, and again in its <code>finally</code> block, which also runs after an error. Java's <code>java.util.concurrent.Semaphore</code>, like many semaphores, does not require a release to match an earlier acquire, so an extra release simply adds a permit.</p>
+<p>The model counts running jobs and free permits; which worker runs which job is left out.</p>
+<pre><code>------------------ MODULE PSl3_Workers ------------------
+EXTENDS Integers
+VARIABLES running, permits
+
+MaxJobs == 2
+
+Init == /\ running = 0
+        /\ permits = MaxJobs
+
+Start  == /\ permits &gt; 0
+          /\ permits' = permits - 1
+          /\ running' = running + 1
+
+Finish == /\ running &gt; 0
+          /\ running' = running - 1
+          /\ permits' = permits + 1
+
+Fail   == /\ running &gt; 0
+          /\ running' = running - 1
+          /\ permits' = permits + 2
+
+Next == Start \/ Finish \/ Fail
+
+AtMostTwo == running =&lt; MaxJobs
+=========================================================</code></pre>
+<p>A teammate ran TLC with <code>INIT Init</code>, <code>NEXT Next</code> and <code>INVARIANT AtMostTwo</code> and got:</p>
+<pre><code>Error: Invariant AtMostTwo is violated.
+Error: The behavior up to this point is:
+State 1: &lt;Initial predicate&gt;
+/\ permits = 2
+/\ running = 0
+
+State 2: &lt;Start line 10, col 11 to line 12, col 35 of module PSl3_Workers&gt;
+/\ permits = 1
+/\ running = 1
+
+State 3: &lt;Start line 10, col 11 to line 12, col 35 of module PSl3_Workers&gt;
+/\ permits = 0
+/\ running = 2
+
+State 4: &lt;Fail line 18, col 11 to line 20, col 35 of module PSl3_Workers&gt;
+/\ permits = 2
+/\ running = 1
+
+State 5: &lt;Start line 10, col 11 to line 12, col 35 of module PSl3_Workers&gt;
+/\ permits = 1
+/\ running = 2
+
+State 6: &lt;Start line 10, col 11 to line 12, col 35 of module PSl3_Workers&gt;
+/\ permits = 0
+/\ running = 3</code></pre>
+<!--fig:workers-trace-->
+<ol class="tasks">
+<li>Which state violates <code>AtMostTwo</code>? Now read the trace backward, as {{ref:counter}} did for the counter: for each step, ask whether the step itself was allowed and sensible. Which step first went wrong?</li>
+<li>Find a formula over <code>permits</code> and <code>running</code> that is true in states 1 to 3 and false from state 4 on. Why is it a sharper invariant for this design than <code>AtMostTwo</code>?</li>
+<li>Fix <code>Fail</code>, add your formula as a second invariant, and run TLC. How many distinct states does it find?</li>
+<li>If you run TLC with several worker threads, using its <code>-workers</code> option, it may print a different trace of the same length. Is that a different bug?</li>
+</ol>
+<div class="quiz" data-answer="2" data-explain="Fail adds 2 permits when one job ends. Every Start in the trace is allowed by its guard; the extra permit from Fail is what lets the third job start."><fieldset><legend>Which case of <code>Next</code> is wrong?</legend><label><input type="radio" name="q-ps-l3-workers" value="0"><code>Start</code>, because it ran with 1 job already running</label><label><input type="radio" name="q-ps-l3-workers" value="1"><code>Finish</code></label><label><input type="radio" name="q-ps-l3-workers" value="2"><code>Fail</code></label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="4|four|state4" data-explain="In state 4, permits = 2 and running = 1, so permits + running = 3. States 1 to 3 all sum to 2." data-retry="Add permits and running in each state of the trace."><label>First state in the trace where <code>permits + running</code> is not 2 <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="3|three" data-explain="running is 0, 1 or 2, and permits is then 2 - running." data-retry="With the fix, permits + running stays 2. How many values can running take?"><label>Distinct states found after the fix <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>The state where the invariant fails is where the damage shows, not where it was done. Steps 4 to 5 and 5 to 6 are <code>Start</code>, and each had a permit available. So where did the extra permit come from?</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong> State 6, with 3 jobs running. Going backward: step 5 to 6 is <code>Start</code> with <code>permits = 1</code>, so its guard was true. Step 4 to 5 is <code>Start</code> with 2 permits, also allowed. But state 4 is already wrong: one job is running and 2 permits are free, so the semaphore will admit 2 more. Step 3 to 4 is <code>Fail</code>: one job ended and 2 permits came back. That is the error handler and the <code>finally</code> block each calling <code>release()</code>.</p>
+<p><strong>(b)</strong> <code>permits + running = MaxJobs</code>. Each permit is either free or held by a running job, and this formula says exactly that. It fails at state 4, the moment the bookkeeping goes wrong, while <code>AtMostTwo</code> fails only two steps later when the extra permit happens to be used. An invariant that states <em>why</em> the design works catches errors closer to their cause.</p>
+<p><strong>(c)</strong> With <code>Fail</code> releasing one permit, TLC reports no error and 3 distinct states. Deadlock checking was on, and none was reported: from every state, either a job can start or one can end.</p>
+<pre><code>------------------ MODULE PSl3_WorkersFixed ------------------
+EXTENDS Integers
+VARIABLES running, permits
+
+MaxJobs == 2
+
+Init == /\ running = 0
+        /\ permits = MaxJobs
+
+Start  == /\ permits &gt; 0
+          /\ permits' = permits - 1
+          /\ running' = running + 1
+
+Finish == /\ running &gt; 0
+          /\ running' = running - 1
+          /\ permits' = permits + 1
+
+Fail   == /\ running &gt; 0
+          /\ running' = running - 1
+          /\ permits' = permits + 1
+
+Next == Start \/ Finish \/ Fail
+
+AtMostTwo == running =&lt; MaxJobs
+PermitsOK == permits + running = MaxJobs
+=========================================================</code></pre>
+<p><code>Fail</code> and <code>Finish</code> are now the same formula. Keep both if you want the trace to say which way a job ended. In the code, the fix is to release only in the <code>finally</code> block.</p>
+<p><strong>(d)</strong> No. With one worker thread, TLC searches in a fixed order and printed the trace above. With several threads, our run printed Start, Fail, Start, Start, Start: the extra permit appears after the first job fails instead of the second. Both traces have 6 states and the same <code>Fail</code> step, so they show the same bug. Read any trace for the step that breaks the design's reasoning, not for its exact order.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l3-euclid">
+<p class="problem-meta"><span>Problem 3</span><span class="level" title="Difficulty 2 of 3">●●○</span><span class="domain">Algorithms</span></p>
+<h2>Euclid's algorithm: termination, deadlock, and a loop that never ends</h2>
+<p class="uses">Draws on {{ref:program}}, {{ref:logic}} and {{ref:counter}}.</p>
+<p>Euclid's algorithm finds the greatest common divisor (GCD) of two positive integers, the largest number that divides both. In its original form it uses only subtraction: while the two numbers differ, subtract the smaller from the larger. When they are equal, that value is the GCD of the numbers you started with. The GCD of 34 and 21 is 1.</p>
+<pre><code>------------------ MODULE PSl3_Euclid ------------------
+EXTENDS Integers
+VARIABLES x, y
+
+M == 34
+N == 21
+
+Init == /\ x = M
+        /\ y = N
+
+SubY == /\ y &lt; x
+        /\ x' = x - y
+        /\ y' = y
+
+SubX == /\ x &lt; y
+        /\ y' = y - x
+        /\ x' = x
+
+Next == SubY \/ SubX
+
+Positive == x &gt; 0 /\ y &gt; 0
+Answer   == (x = y) =&gt; (x = 1)
+========================================================</code></pre>
+<p>As with <code>Max</code> in {{ref:counter}}, the inputs are definitions; to try other inputs, edit them.</p>
+<ol class="tasks">
+<li>Run TLC with a config containing only <code>INIT Init</code> and <code>NEXT Next</code>. It reports a deadlock. Look at the last state of the trace: is it a deadlock or a termination, in Lamport's sense?</li>
+<li>Add <code>CHECK_DEADLOCK FALSE</code>, <code>INVARIANT Positive</code> and <code>INVARIANT Answer</code>, and run again. How many distinct states does TLC find? Why is it the same as the number of states in the trace from (a)?</li>
+<li><code>Answer</code> is an implication. In which states is it true only because <code>x = y</code> is false? If a bug kept the algorithm from ever reaching <code>x = y</code>, what would TLC report about <code>Answer</code>?</li>
+<li>A colleague changes <code>SubY</code>'s guard to <code>y =&lt; x</code>, “to handle equal numbers.” Predict, then run TLC twice: once with <code>INVARIANT Positive</code> (and deadlock checking on), and once with only <code>INIT</code> and <code>NEXT</code>. Explain each result.</li>
+<li>Change the inputs to 12 and 18, and <code>Answer</code> to <code>x = 6</code>. Run again.</li>
+</ol>
+<div class="quiz" data-answer="0" data-explain="The last state is x = 1, y = 1. Neither guard is true, so there is no next state. The algorithm was meant to stop there, with the answer in x: that is termination, which TLC can't tell from deadlock."><fieldset><legend>What does TLC's deadlock report in (a) mean?</legend><label><input type="radio" name="q-ps-l3-euclid" value="0">The algorithm stopped where it should, with the answer</label><label><input type="radio" name="q-ps-l3-euclid" value="1">The two subtraction cases wait for each other</label><label><input type="radio" name="q-ps-l3-euclid" value="2">The model has too many states for TLC</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="8|eight" data-explain="Each state has at most one next state, so the reachable states form one path, the same path the deadlock trace printed: 8 states from (34, 21) to (1, 1)." data-retry="Run it, or follow the subtractions by hand from 34 and 21 until the numbers are equal, counting states."><label>Distinct states found in (b) <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="9|nine|state9" data-explain="The first 8 states are as before. At (1, 1) the new guard 1 =&lt; 1 is true, so SubY gives x = 0 in state 9." data-retry="Follow the same path as before. What does the new guard allow at the state where the old algorithm stopped?"><label>With the colleague's guard, which state of the trace violates <code>Positive</code>? <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>For (d), work out by hand what happens at <code>x = 1, y = 1</code> with the new guard, and then at the state after it. Which case applies there, and what next state does it produce?</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong> TLC prints <code>Error: Deadlock reached.</code> and a trace of 8 states, shortened here:</p>
+<pre><code>State 1: &lt;Initial predicate&gt;
+/\ x = 34
+/\ y = 21
+State 2: &lt;SubY line 11, col 9 to line 13, col 17 of module PSl3_Euclid&gt;
+/\ x = 13
+/\ y = 21
+...
+State 8: &lt;SubY line 11, col 9 to line 13, col 17 of module PSl3_Euclid&gt;
+/\ x = 1
+/\ y = 1</code></pre>
+<p>It is termination: the algorithm is supposed to stop when <code>x = y</code>, and <code>x</code> holds the GCD, 1. As {{ref:counter}} explained, nothing in the spec says stopping is intended, so TLC reports it. Here the report is even useful: it shows you where and how the algorithm stops.</p>
+<!--fig:euclid-->
+<p><strong>(b)</strong> No error, and 8 distinct states. The guards <code>y &lt; x</code> and <code>x &lt; y</code> can't both be true, so every state has at most one next state. With one initial state, the reachable states form a single path, drawn above, and the deadlock trace in (a) was that whole path.</p>
+<p><strong>(c)</strong> In states 1 to 7, where <code>x</code> and <code>y</code> differ, <code>Answer</code> is true because its left side is false. It says something only in state 8. If a bug kept the algorithm from ever reaching <code>x = y</code>, <code>Answer</code> would be true in every state and TLC would report no error: this is the vacuous check from {{ref:logic}}. <code>Answer</code> says the result is right <em>if</em> the algorithm stops; it does not say the algorithm stops.</p>
+<p><strong>(d)</strong> With <code>INVARIANT Positive</code>, TLC reports <code>Invariant Positive is violated</code> in state 9, <code>x = 0, y = 1</code>: at <code>x = 1, y = 1</code>, the guard <code>1 =&lt; 1</code> is true, so <code>SubY</code> subtracts. With only <code>INIT</code> and <code>NEXT</code>, TLC reports <code>Model checking completed. No error has been found.</code> and 9 distinct states. There is no deadlock now, because at <code>x = 0, y = 1</code>, <code>SubX</code> applies (0 &lt; 1) and produces <code>y' = 1 - 0 = 1</code>, the same state again. The algorithm subtracts zero forever. So “no deadlock” here is bad news: the deadlock check finds states with no next step, and this bug creates a state whose only next step goes nowhere. Saying “the algorithm eventually stops” is a different kind of property, which the course reaches later. For now, notice that <code>Positive</code> caught the bug, and the deadlock report you got in (a) was a sign of health.</p>
+<p><strong>(e)</strong> The path is (12, 18), (12, 6), (6, 6): TLC finds 3 distinct states and no error, and <code>Answer</code> holds with 6.</p>
+</details>
+</article>
+
+<article class="problem" id="ps-l3-retry">
+<p class="problem-meta"><span>Problem 4</span><span class="level" title="Difficulty 3 of 3">●●●</span><span class="domain">Networking</span></p>
+<h2>Model-check the retry loop, then lose a response</h2>
+<p class="uses">Synthesis. Draws on {{ref:ps-l2}} (the retry loop), {{ref:orientation}}, {{ref:states}}, {{ref:logic}} and {{ref:counter}}.</p>
+<p>In {{ref:ps-l2}}, problem 1, you wrote the HTTP client's retry loop as <code>Init</code> and <code>Next</code>. Now check it, and then make it more realistic.</p>
+<ol class="tasks">
+<li>Save the solution module of that problem as <code>PSl2_Retry.tla</code>, with a config containing <code>INIT Init</code> and <code>NEXT Next</code>, and run TLC. It reports a deadlock. Read the last state of the trace: deadlock or termination?</li>
+<li><code>CHECK_DEADLOCK FALSE</code> would silence this, but it would also silence a real hang added later. Instead, add a case to <code>Next</code> that allows the finished program to take a step that changes nothing:
+<pre><code>Done == /\ pc = "done"
+        /\ pc' = pc
+        /\ attempts' = attempts
+        /\ ok' = ok</code></pre>
+Run again with deadlock checking on and with <code>INVARIANT BudgetOK</code> and <code>INVARIANT DoneOK</code>. How many distinct states does TLC find, and what does a deadlock report now mean?</li>
+<li>Now model the network. <code>send()</code> becomes a request followed by a wait for the response, which may be <code>"ok"</code>, <code>"err"</code>, or lost. Add a variable <code>resp</code>, initially <code>"none"</code>, add <code>resp' = resp</code> to every case that doesn't set it, and replace <code>Send</code> with these three cases:
+<pre><code>Send == /\ pc = "send"
+        /\ (resp' = "ok" \/ resp' = "err" \/ resp' = "lost")
+        /\ pc' = "wait"
+        /\ attempts' = attempts
+        /\ ok' = ok
+
+GotOk  == /\ pc = "wait"
+          /\ resp = "ok"
+          /\ ok' = TRUE
+          /\ pc' = "count"
+          /\ attempts' = attempts
+          /\ resp' = resp
+
+GotErr == /\ pc = "wait"
+          /\ resp = "err"
+          /\ ok' = FALSE
+          /\ pc' = "count"
+          /\ attempts' = attempts
+          /\ resp' = resp</code></pre>
+Run with deadlock checking on and <code>INVARIANT BudgetOK</code>. What does TLC report?</li>
+<li>Is that report a real deadlock? Which line of real client code does it correspond to? Add a case <code>Timeout</code> that fixes it, and run again.</li>
+<li>The timeout counts a lost response as a failure and tries again. Using the upload example in {{ref:orientation}}, say what can go wrong on the server. What did this model leave out that hides the problem?</li>
+</ol>
+<!--fig:retrynet-->
+<div class="numcheck" data-answer="20|twenty" data-explain="The same 20 states as the ps-l2 model: Done adds a step from each finished state to itself, not a new state." data-retry="Done never creates a new state. How many states did the problem set 2 solution say the model has?"><label>Distinct states found in (b) <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="3|three" data-explain="Initial state, then Test, then Send with a lost response: the client is waiting at pc = &quot;wait&quot; and no case applies." data-retry="What is the earliest point at which a response can be lost?"><label>States in the shortest behavior that reaches the hang in (c) <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<div class="numcheck" data-answer="38|thirty-eight|thirtyeight" data-explain="TLC finds 38 distinct states and no error once Timeout handles the lost response." data-retry="Compare your Timeout with the solution: it should set ok' = FALSE and go to count, like GotErr."><label>Distinct states found after adding <code>Timeout</code> <input type="text" inputmode="numeric" autocomplete="off"></label><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
+<details class="hint"><summary>Hint</summary><p>For (c), look at the figure: from <code>wait</code>, which values of <code>resp</code> have a case that leaves? For (d), a hang that the user sees as a spinner forever is exactly what an HTTP timeout is for.</p></details>
+<details class="answer solution"><summary>Solution</summary>
+<p><strong>(a)</strong> In our run the trace ended in the state <code>attempts = 1, ok = TRUE, pc = "done"</code>: the first send succeeded and the loop exited. Your trace may end in another of the four done states. Either way, it is termination: the program is supposed to stop there.</p>
+<p><strong>(b)</strong> No error, and 20 distinct states, the same 20 as in {{ref:ps-l2}}. <code>Done</code> adds a step from each finished state to itself, so no state is left without a next state, and no new states appear. Now a deadlock report can only mean the program got stuck somewhere other than <code>"done"</code>. This is a common way to separate the two: say in the spec that stopping at the end is intended, and leave deadlock checking on for everything else.</p>
+<p><strong>(c)</strong> TLC reports a deadlock with a 3-state trace:</p>
+<pre><code>Error: Deadlock reached.
+Error: The behavior up to this point is:
+State 1: &lt;Initial predicate&gt;
+/\ resp = "none"
+/\ attempts = 0
+/\ ok = FALSE
+/\ pc = "test"
+
+State 2: &lt;Test line 10, col 9 to line 16, col 23 of module PSl3_RetryNet&gt;
+/\ resp = "none"
+/\ attempts = 0
+/\ ok = FALSE
+/\ pc = "send"
+
+State 3: &lt;Send line 25, col 9 to line 29, col 19 of module PSl3_RetryNet&gt;
+/\ resp = "lost"
+/\ attempts = 0
+/\ ok = FALSE
+/\ pc = "wait"</code></pre>
+<p>In the figure, the red box marks these states: <code>pc</code> is <code>"wait"</code>, the response was lost, and no case of <code>Next</code> applies.</p>
+<p><strong>(d)</strong> Yes, this one is real. The client waits for a response that will never come, which in code is an HTTP call with no timeout. Some popular HTTP libraries wait indefinitely unless you set a timeout, so this hang happens in production: the user sees a spinner forever. The fix is a case for the lost response:</p>
+<pre><code>----------------- MODULE PSl3_RetryNetFixed -----------------
+EXTENDS Integers
+VARIABLES attempts, ok, pc, resp
+
+Init == /\ attempts = 0
+        /\ ok = FALSE
+        /\ pc = "test"
+        /\ resp = "none"
+
+Test == /\ pc = "test"
+        /\ ~ok
+        /\ attempts &lt; 3
+        /\ pc' = "send"
+        /\ attempts' = attempts
+        /\ ok' = ok
+        /\ resp' = resp
+
+Exit == /\ pc = "test"
+        /\ (ok \/ ~(attempts &lt; 3))
+        /\ pc' = "done"
+        /\ attempts' = attempts
+        /\ ok' = ok
+        /\ resp' = resp
+
+Send == /\ pc = "send"
+        /\ (resp' = "ok" \/ resp' = "err" \/ resp' = "lost")
+        /\ pc' = "wait"
+        /\ attempts' = attempts
+        /\ ok' = ok
+
+GotOk  == /\ pc = "wait"
+          /\ resp = "ok"
+          /\ ok' = TRUE
+          /\ pc' = "count"
+          /\ attempts' = attempts
+          /\ resp' = resp
+
+GotErr == /\ pc = "wait"
+          /\ resp = "err"
+          /\ ok' = FALSE
+          /\ pc' = "count"
+          /\ attempts' = attempts
+          /\ resp' = resp
+
+Timeout == /\ pc = "wait"
+           /\ resp = "lost"
+           /\ ok' = FALSE
+           /\ pc' = "count"
+           /\ attempts' = attempts
+           /\ resp' = resp
+
+Count == /\ pc = "count"
+         /\ attempts' = attempts + 1
+         /\ pc' = "test"
+         /\ ok' = ok
+         /\ resp' = resp
+
+Done == /\ pc = "done"
+        /\ pc' = pc
+        /\ attempts' = attempts
+        /\ ok' = ok
+        /\ resp' = resp
+
+Next == Test \/ Exit \/ Send \/ GotOk \/ GotErr \/ Timeout \/ Count \/ Done
+
+BudgetOK == attempts \in 0..3
+========================================================</code></pre>
+<p>TLC now reports no error and 38 distinct states, with deadlock checking on. That is evidence that the only place the client stops is <code>"done"</code>, which you could not have learned with <code>CHECK_DEADLOCK FALSE</code>.</p>
+<p><strong>(e)</strong> A lost <em>response</em> does not mean a lost <em>request</em>. In the upload example of {{ref:orientation}}, the server committed the document and only the reply was lost; retrying created a second document. Here, a timeout after a request that the server did process leads to a second request, and if the request was “charge this card” or “create this order,” it happens twice. The model hides this because it has no server: it records only what the client sees. To check “at most one order per click,” the state would need the server's side too, such as the number of orders created, plus a way for the server to recognise a repeated request. Later lessons build that kind of model.</p>
+</details>
+</article>
