@@ -3,7 +3,7 @@
 <!--fig:route-->
 <p>Follow the route in the diagram. The top row starts from nothing and ends with your first real protocol. The second row runs right to left through commit protocols and into the question of what it means for one spec to implement another. The bottom row has no videos. It applies what you learned to concurrency, large models, failures, and application design, and it ends with review.</p>
 <p>TLA stands for <em>Temporal Logic of Actions</em>. A <strong>specification</strong>, or spec, is a precise description of what a system is allowed to do. It is not a program that serves requests. You decide what matters, how it can change, and what must stay true, and then a tool searches for a counterexample. The value is often finding that a design you can explain convincingly still allows a bad execution.</p>
-<p>The video in this lesson is Lamport's talk “Thinking Above the Code.” Watch it for motivation. No later lesson depends on its details, so you can return to it at any point.</p>
+<p>The video in this lesson is Lamport's talk “Thinking Above the Code.” Watch it for motivation. No later lesson depends on its details, so you can return to it at any point. Its main example, Quicksort, is worked through at the end of this lesson as a lab, as code, and as a TLA+ spec.</p>
 <h2>How to study with the videos</h2>
 <p>Each lecture has one or more lessons here, in the lecture's order and with its examples. When a lecture spans several lessons, each lesson says which part of the lecture it covers. Its “While you watch” section tells you what to look for, where to stop and try the problem yourself, and what the lesson adds. Each video is meant to be viewed along with its web page on Lamport's course site. The videos and that site need internet; the lesson text and the labs work offline.</p>
 <!--fig:loop-->
@@ -18,5 +18,89 @@
 <p>Each box in the diagram records only two things: where the upload is, and how many documents exist. The upper path is the one everyone pictures. On the lower path the server commits, the reply is lost, the screen times out, and the user retries. No single screen looks wrong, and the final box has two documents. Nothing about the button's appearance appears in the diagram, because the button is not what went wrong.</p>
 <p>Keep a prediction notebook with three lines for each claim: <em>claim, suspected breaking path, evidence needed</em>. For this app: “one upload creates at most one document; a lost reply followed by a retry might break it; inspect how the server recognizes a repeated request.” That is a concrete question for implementation, not a vague instruction to make uploads reliable. By the end of the lectures you will be able to write this as a spec and have a tool find the lower path for you.</p>
 <details class="answer"><summary>Predict: is disabling the Upload button enough to guarantee one document?</summary><p>No. It prevents one local interaction but says nothing about the lost reply and retry in the diagram. The server needs a way to connect a repeated request to the same result. The button can improve the experience, but the server has to enforce the rule.</p></details>
+<h2>Quicksort, above the code</h2>
+<p>The main example in Lamport's talk is Quicksort. Most programmers describe it as a recursive procedure: partition the array, then sort each half. That describes code. Lamport describes it one level up, without recursion:</p>
+<ol><li>Keep a set <code>U</code> of index intervals that still need sorting. At the start it holds one interval, the whole array.</li><li>Remove <em>any</em> interval from <code>U</code>. If it has one element, it is already sorted.</li><li>Otherwise, partition it at some index <code>p</code>, so that every value in the left part is at most every value in the right part. Put both parts back in <code>U</code>.</li><li>When <code>U</code> is empty, the array is sorted.</li></ol>
+<p>The important word is “any.” The description doesn't say which interval to take next. A recursive program takes the newest one, so it is using a stack. A loop over a work queue takes the oldest one. Several threads could each take a different interval at the same time. All three are Quicksort, because each does something the description allows.</p>
+<!--fig:qs-impl-->
+<div class="lab" id="orientation-qs-lab"><h2>Sort it yourself</h2>
+<p>Each bar is one array element, with its index underneath. The brackets under the bars are the intervals in <code>U</code>, and a green bar is in its final place. Press an interval in the first row to choose it yourself. The next two buttons choose for you, the way a program would. U remembers the order in which intervals were added. <strong>Newest (stack)</strong> takes the interval added most recently, like taking the top plate from a stack. That is what the code below does with <code>pop</code>. <strong>Oldest (queue)</strong> takes the interval that has waited longest, like the front of a line, so the array is split one level at a time. A partition adds its left part first and then its right part, so the right part is always the newest. The dashed line shows where the last partition split its interval. This runs the JavaScript code printed below one step at a time; it is not TLC.</p>
+<div class="controls" id="orientation-qs-choices"></div>
+<div class="controls"><button id="orientation-qs-stack" type="button">Newest (stack)</button><button id="orientation-qs-queue" type="button">Oldest (queue)</button><button id="orientation-qs-undo" type="button">Step back</button><button id="orientation-qs-restart" type="button">Restart</button><button id="orientation-qs-new" type="button">New array</button></div>
+<div style="overflow-x:auto"><svg id="orientation-qs-graph" viewBox="0 0 628 294" role="img" aria-label="The array as bars, with the intervals still to sort" style="min-width:520px"></svg></div>
+<p class="status" id="orientation-qs-status" aria-live="polite"></p>
+<div class="readout" id="orientation-qs-trace"></div></div>
+<p>Sort the array once with each button, then compare the two readouts. The steps come in a different order and the arrays in between differ, but both runs end with the same sorted array. Also notice when a bar turns green: only when its interval is down to one element, and after that it never moves.</p>
+<h3>The iterative code</h3>
+<p>This is the program the lab runs. The array <code>todo</code> plays the part of <code>U</code>, and <code>pop</code> makes it a stack. Change <code>pop</code> to <code>shift</code> and it becomes a queue, and it still sorts.</p>
+<pre><code>function quicksort(a) {
+  const todo = [[0, a.length - 1]];  // U: intervals still to sort
+  while (todo.length &gt; 0) {
+    const [lo, hi] = todo.pop();     // choose one: here, the newest
+    if (lo &gt;= hi) continue;          // one element is already sorted
+    const p = partition(a, lo, hi);
+    todo.push([lo, p], [p + 1, hi]);
+  }
+  return a;
+}
+
+// Hoare's partition. Returns p with lo &lt;= p &lt; hi, and
+// rearranges a[lo..hi] so every a[lo..p] &lt;= every a[p+1..hi].
+function partition(a, lo, hi) {
+  const pivot = a[Math.floor((lo + hi) / 2)];
+  let i = lo - 1, j = hi + 1;
+  for (;;) {
+    do i++; while (a[i] &lt; pivot);
+    do j--; while (a[j] &gt; pivot);
+    if (i &gt;= j) return j;
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+}</code></pre>
+<p>Hoare's partition is the hard part to get right, with its two indexes that cross. The description doesn't care how it works, only what it guarantees: <code>p</code> lies between <code>lo</code> and <code>hi - 1</code>, values outside <code>lo..hi</code> don't move, and every value up to <code>p</code> is at most every value after it.</p>
+<h3>The same algorithm in TLA+</h3>
+<p>Here is the description written as a TLA+ spec. For now, read it for its shape; Lectures 2 to 4 teach the notation. <code>Init</code> says the array may hold any values and that <code>U</code> holds the whole array. <code>Partition</code> is one step. It chooses any interval in <code>U</code>, then any <code>p</code> and any rearranged array <code>B</code> that meet the three conditions of a partition. Nothing in it mentions pivots, swaps, stacks, or recursion.</p>
+<pre><code>------------------------------ MODULE QuickSort ------------------------------
+EXTENDS Integers, FiniteSets
+CONSTANTS N, Values
+Idx == 0..(N-1)
+VARIABLES A, U       \* the array, and the set of intervals still to sort
+vars == &lt;&lt;A, U&gt;&gt;
+
+Count(B, v) == Cardinality({i \in Idx : B[i] = v})
+IsPerm(B) == \A v \in Values : Count(B, v) = Count(A, v)
+Sorted == \A i, j \in Idx : i &lt; j =&gt; A[i] =&lt; A[j]
+
+Init == /\ A \in [Idx -&gt; Values]
+        /\ U = {&lt;&lt;0, N-1&gt;&gt;}
+
+\* Pick ANY interval in U. The spec does not say which one.
+Partition == \E I \in U :
+    LET lo == I[1]
+        hi == I[2]
+    IN  IF lo &lt; hi
+        THEN \E p \in lo..(hi-1), B \in [Idx -&gt; Values] :
+               /\ \A i \in Idx \ (lo..hi) : B[i] = A[i]
+               /\ IsPerm(B)
+               /\ \A i \in lo..p, j \in (p+1)..hi : B[i] =&lt; B[j]
+               /\ A' = B
+               /\ U' = (U \ {I}) \cup {&lt;&lt;lo, p&gt;&gt;, &lt;&lt;p+1, hi&gt;&gt;}
+        ELSE /\ U' = U \ {I}
+             /\ UNCHANGED A
+
+Done == U = {} /\ UNCHANGED vars
+Next == Partition \/ Done
+Spec == Init /\ [][Next]_vars /\ WF_vars(Partition)
+
+SortedWhenDone == U = {} =&gt; Sorted
+Terminates == &lt;&gt;(U = {})
+==============================================================================</code></pre>
+<p>The model checker reads a small configuration file that picks sizes for the constants and names what to check:</p>
+<pre><code>CONSTANTS N = 4  Values = {1, 2, 3}
+SPECIFICATION Spec
+INVARIANT SortedWhenDone
+PROPERTY Terminates</code></pre>
+<div class="table-wrap"><table><thead><tr><th>In the code</th><th>In the spec</th></tr></thead><tbody><tr><td><code>todo</code></td><td><code>U</code></td></tr><tr><td><code>todo.pop()</code></td><td><code>\E I \in U</code>, any interval</td></tr><tr><td><code>if (lo &gt;= hi) continue</code></td><td>the <code>ELSE</code> branch</td></tr><tr><td><code>partition(a, lo, hi)</code></td><td>any <code>p</code> and <code>B</code> that meet the conditions</td></tr><tr><td><code>todo.push(…)</code></td><td><code>U' = (U \ {I}) \cup {…}</code></td></tr></tbody></table></div>
+<p>With 4 elements and values from 1 to 3, TLC tries all 81 starting arrays and every order of choosing intervals, 731 distinct states, in about a second. <code>SortedWhenDone</code> says the array is sorted once <code>U</code> is empty, and <code>Terminates</code> says <code>U</code> does become empty. That leaves a separate and smaller question: is every step of the code a step the spec allows? {{lesson:implementation}} is about that question.</p>
+<details class="answer"><summary>Predict: a bug puts only the left part back, <code>&lt;&lt;lo, p&gt;&gt;</code>. Which property fails, and how long is the shortest failing behavior?</summary><p><code>SortedWhenDone</code> fails, and TLC needs only three states. The array 1, 1, 1, 2 is partitioned at <code>p = 0</code> into 1, 1, 2, 1. The bug drops the right part, the left part has one element, and <code>U</code> is empty while 2 still comes before 1. <code>Terminates</code> still holds, since a program that forgets work finishes sooner. Tests on arrays that are already sorted would all pass.</p></details>
 <div class="quiz" data-answer="2" data-explain="The labs are small JavaScript models. Only the real tools, installed later in the course, check a TLA+ module."><fieldset><legend>You stepped through a lab and saw no bad state. What have you learned?</legend><label><input type="radio" name="q-a-orient" value="0">The TLA+ module is verified</label><label><input type="radio" name="q-a-orient" value="1">The deployed system is correct</label><label><input type="radio" name="q-a-orient" value="2">You followed a small teaching model; nothing was verified</label></fieldset><button type="button">Check answer</button><p class="quiz-feedback" aria-live="polite"></p></div>
 <p class="resources">The course's source: <a target="_blank" rel="noopener noreferrer" href="https://lamport.azurewebsites.net/video/videos.html">The TLA+ Video Course</a>. Links need internet.</p>

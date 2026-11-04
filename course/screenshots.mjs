@@ -7,7 +7,7 @@ const b=await launch();
 async function shot(name,{hash,theme='light',width=1280,height=800,selector,maxHeight=760,pad=24,prepare}={}){
   const p=await b.newPage({viewport:{width,height},deviceScaleFactor:2});
   await p.goto(url+'#'+hash);await p.waitForTimeout(500);
-  if(theme==='dark')await p.click('#theme');
+  if(theme==='dark'){await p.click('#theme');await p.waitForTimeout(700);}
   if(prepare)await prepare(p);
   await p.evaluate(()=>{document.activeElement&&document.activeElement.blur();window.scrollTo(0,0);});await p.waitForTimeout(200);
   const file=path.join(OUT,name+'.png');

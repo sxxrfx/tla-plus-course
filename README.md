@@ -17,7 +17,7 @@ The whole course is one HTML file. Open it in a browser and it works without a n
   - **Algorithms:** Tower of Hanoi, Euclid's GCD, git bisect and a lock-free ring buffer.
   - **UI design-system components:** a modal, a combobox, a tag input and an undo toast.
 - **206 diagrams.** The diagrams are inline SVG drawn from the actual mechanism: state graphs, message sequences, traces and quorum overlaps. They follow the light or dark theme.
-- **11 interactive labs.** You can step through Die Hard, the alternating bit protocol, quorums, fairness, a cache race and more.
+- **12 interactive labs.** You can step through Quicksort, Die Hard, the alternating bit protocol, quorums, fairness, a cache race and more.
 - **167 self-checking questions.** There are 90 multiple-choice quizzes and 77 short-answer checks, with hints and worked solutions.
 - **Automatic progress.** A lesson ticks itself when you reach the end and answer its quizzes correctly. A problem ticks itself when all of its checks are right, and a problem set when all of its problems are solved. Anything you untick by hand stays unticked.
 - **Checked specs.** Every TLA+ module the course prints is in [`course/specs`](course/specs) and was checked with TLC. Every state count and trace length in the text comes from those runs.
@@ -34,7 +34,7 @@ The whole course is one HTML file. Open it in a browser and it works without a n
 
 **Online.** Open [sxxrfx.github.io/tla-plus-course](https://sxxrfx.github.io/tla-plus-course/). Your progress, answers and notes are saved in that browser's local storage, so they come back when you return in the same browser. They are not synced to other browsers or devices, and clearing the site's data for `sxxrfx.github.io` erases them.
 
-**Offline.** Download [`tla-plus-course.html`](tla-plus-course.html) and open it. Progress is saved in that browser's local storage the same way, separately from the online copy. **Save progress** forces a save. **Print course** prints every lesson.
+**Offline.** Download [`tla-plus-course.html`](tla-plus-course.html) and open it. Progress is saved in that browser's local storage the same way, separately from the online copy.
 
 **As a macOS app** (macOS 14 or later, Apple silicon). You need Rust and Cargo, plus Apple's command-line developer tools:
 
@@ -79,6 +79,7 @@ course/
   src/<id>.html          lesson bodies; <id>.figs.py draws that lesson's diagrams with dg.py
   labs/*.js              interactive labs, problem-set behaviour, automatic progress
   template.html          page shell: styles, navigation, progress, videos
+  fonts/                 Google Fonts (OFL) that build.py embeds, so the page works offline
   build.py               assembles the page and fails on lint errors
   specs/                 every TLA+ module and TLC config the course prints
   docs/                  authoring guides for lessons and problem sets
