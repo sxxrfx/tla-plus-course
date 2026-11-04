@@ -91,6 +91,10 @@ To add or change a lesson, see [`course/docs/lesson-guide.md`](course/docs/lesso
 - Some facts about real products, such as Postgres isolation levels, Redis locks, Raft's membership rules and memcache leases, are stated from general knowledge rather than tested against those systems.
 - A few modules are reconstructions, not Lamport's own files. AB2P is one; the lessons say which.
 
+## License
+
+[MIT](LICENSE). TLA+, its tools and Lamport's videos and scripts are not covered by this license; they belong to their owners.
+
 ## Credits
 
 TLA+ and the video course are by Leslie Lamport. This is an independent study course, not affiliated with him or with the TLA+ Foundation. The videos are embedded from YouTube and linked to [Lamport's video page](https://lamport.azurewebsites.net/video/videos.html), and the lessons paraphrase rather than reproduce his scripts.
