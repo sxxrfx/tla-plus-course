@@ -1,0 +1,44 @@
+# Publishes tla-plus-course.html to GitHub Pages as index.html.
+# Progress is kept in each visitor's browser (localStorage), as when the file is opened locally.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the committed page is up to date
+        run: |
+          cd course && python3 build.py
+          git diff --exit-code -- ../tla-plus-course.html
+      - name: Assemble site
+        run: |
+          mkdir _site
+          cp tla-plus-course.html _site/index.html
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
