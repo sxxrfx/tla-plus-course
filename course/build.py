@@ -68,13 +68,17 @@ for lid,part,title,_,_v in C:
             if 'class="answer solution"' not in art: errs.append(f"{pid}: missing solution")
         if b.count('<article class="problem"')!=b.count('</article>'): errs.append(f"{lid}: unbalanced <article>")
         stats[lid]['problems']=len(probs)
-        chap=f"Problem set · {part}"
-    else: chap=f"Lesson {num[lid]} · {part}"
-    sections.append(f'<section class="lesson" id="{lid}" data-part="{part}" data-title="{title}">\n<p class="chapter">{chap}</p>{b}</section>')
+    chap=f'<p class="chapter">{part.replace(" · ",": ")}</p>' if part!='Start' else ''
+    sections.append(f'<section class="lesson" id="{lid}" data-part="{part}" data-title="{title}">\n{chap}{b}</section>')
 # main content
 s,n=re.subn(r'<section class="lesson" id="orientation".*?(?=</main>)',lambda m:"\n".join(sections)+"\n",s,count=1,flags=re.S);assert n==1
 # styles + counts
-s=s.replace('@media(max-width:650px){\n .sidebar details',dg.CSS+open(f'{R}/ps.css').read().strip()+'@media(max-width:650px){\n .sidebar details',1)
+assert s.count('</style>')==1;s=s.replace('</style>',dg.CSS+open(f'{R}/ps.css').read().strip()+'\n</style>',1)
+# fonts: Google Fonts (OFL) from fonts/, embedded so the page needs no network
+import base64
+FONTS=[("Lexend","normal","Lexend.woff2"),("Source Sans 3","normal","SourceSans3.woff2"),("Source Sans 3","italic","SourceSans3-Italic.woff2"),("JetBrains Mono","normal","JetBrainsMono.woff2")]
+faces="".join(f'@font-face{{font-family:"{fam}";font-style:{style};font-weight:400 700;font-display:swap;src:url(data:font/woff2;base64,{base64.b64encode(open(f"{R}/fonts/{f}","rb").read()).decode()}) format("woff2")}}\n' for fam,style,f in FONTS)
+assert s.count('/*FONTS*/')==1;s=s.replace('/*FONTS*/\n',faces,1)
 s=s.replace('0 / 28 studied',f'0 / {len(C)} studied').replace('max="28"',f'max="{len(C)}"').replace('28 lessons',f'{len(C)} lessons')
 # videos
 lv={c[0]:c[4] for c in C if c[4]}

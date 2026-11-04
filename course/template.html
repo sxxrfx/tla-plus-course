@@ -6,63 +6,308 @@
 <meta name="description" content="An offline, interactive TLA+ course: state machines, language, model checking, proofs, and distributed architecture studies.">
 <title>TLA+ — an interactive course</title>
 <style>
-:root{color-scheme:light;--background:#f7f9fd;--foreground:#1d2943;--card:#fff;--secondary:#eaf0fa;--muted:#53617a;--border:#ced8e8;--primary:#354ba8;--primary-foreground:#fff;--accent:#e5ebff;--success:#24654a;--destructive:#a62e48;--warning:#80560a;--code-background:#edf1f8;--ring:#6075d1;--chart-1:#4056b5;--chart-2:#26816a;--chart-3:#b14868;--radius:10px;--font-sans:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--font-mono:ui-monospace,SFMono-Regular,Consolas,monospace}
-:root[data-theme=dark]{color-scheme:dark;--background:#172033;--foreground:#e3e9f7;--card:#202c43;--secondary:#283650;--muted:#b3bfd5;--border:#40516c;--primary:#a8baff;--primary-foreground:#172033;--accent:#2c3e64;--success:#87d8af;--destructive:#ff9ab0;--warning:#eec67f;--code-background:#111c30;--ring:#a8baff;--chart-1:#a8baff;--chart-2:#87d8af;--chart-3:#ff9ab0}
-*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--foreground);background:transparent;font:16px/1.65 var(--font-sans)}button,input,select,textarea{font:inherit}a{color:var(--primary);text-underline-offset:3px}button{cursor:pointer}button,select,input[type=search],input[type=number]{border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--foreground);background:var(--card)}button:hover{background:var(--accent)}button:disabled{opacity:.5;cursor:default}button.primary{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary)}:focus-visible{outline:3px solid var(--ring);outline-offset:3px}.skip{position:absolute;left:12px;top:-90px;z-index:10;background:var(--card);padding:12px}.skip:focus{top:12px}.top{display:flex;gap:16px;justify-content:space-between;align-items:center;flex-wrap:wrap;padding:16px 24px;border-bottom:1px solid var(--border)}.brand{font-weight:650;color:var(--foreground);text-decoration:none}.top-actions .save-state{font-size:12px;color:var(--muted);max-width:220px}.top-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.top progress{width:85px;height:7px;accent-color:var(--primary)}.shell{max-width:1260px;margin:auto;display:grid;grid-template-columns:265px minmax(0,1fr)}.sidebar{border-right:1px solid var(--border);padding:18px 14px;align-self:start;position:sticky;top:12px;height:var(--sidebar-height,680px);min-height:0;overflow:hidden}.sidebar summary{font-weight:650}.sidebar input{margin:6px 0 0;width:100%}.toc{list-style:none;padding:0;margin:0}.toc a{display:flex;align-items:baseline;gap:9px;padding:7px 8px;border-radius:5px;text-decoration:none;color:var(--muted);font-size:14px}.toc a[aria-current=page]{color:var(--primary);background:var(--accent)}.toc .num{min-width:22px;font-variant-numeric:tabular-nums}.toc .done{margin-left:auto;color:var(--success)}.group{font-size:13px;font-weight:650;margin:20px 8px 5px;color:var(--foreground)}main{min-width:0;padding:40px 44px 64px;background:var(--background)}.lesson{max-width:800px;margin:auto}.lesson h1{font:normal clamp(30px,4vw,43px)/1.18 Georgia,"Times New Roman",serif;letter-spacing:-.6px;margin:8px 0 20px}.lesson h2{font-size:22px;line-height:1.3;margin:36px 0 12px}.lesson h3{font-size:17px;line-height:1.4;margin:24px 0 8px}.lesson p{margin:12px 0}.lesson ul,.lesson ol{padding-left:24px}.lesson li{margin:7px 0}.chapter{font-size:13px;color:var(--muted)}.lead{font-size:19px;line-height:1.55}.goal{border-left:3px solid var(--primary);padding-left:16px;margin:24px 0}.callout{padding:14px 18px;background:var(--secondary);border-radius:var(--radius);margin:22px 0}.callout p:first-child{margin-top:0}.callout p:last-child{margin-bottom:0}code{font:14px/1.65 var(--font-mono);overflow-wrap:anywhere;background:var(--code-background);padding:1px 4px;border-radius:3px}pre{background:var(--code-background);padding:20px 18px;overflow-x:auto;border-radius:var(--radius);margin:16px 0;max-width:100%;tab-size:4}pre code{padding:0;overflow-wrap:normal;white-space:pre;font-size:13px}.code-tools{display:flex;justify-content:flex-end;margin-top:-10px}.code-tools button{font-size:13px;padding:4px 10px}figure{margin:24px 0}figcaption{font-size:14px;color:var(--muted);margin-top:10px}.flow{display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;margin:20px 0}.node{max-width:100%;overflow-wrap:anywhere;background:var(--secondary);padding:14px 18px;min-width:90px;text-align:center;border-radius:6px}.node small{display:block;color:var(--muted)}.arrow{color:var(--muted);font-size:22px}.branch{display:grid;gap:12px}.diagram-label{text-align:center;color:var(--muted);font-size:14px}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;margin:18px 0;font-size:14px}th,td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--border)}th{font-weight:650}details.answer{margin:16px 0;padding:12px 16px;background:var(--secondary);border-radius:6px}summary{cursor:pointer}.lab{border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin:24px 0;background:var(--card)}.lab h2{font-size:18px;margin-top:0}.controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0}.controls label{min-width:0;max-width:100%;display:flex;align-items:center;gap:7px;flex-wrap:wrap}.controls input[type=number]{width:75px}.controls select{min-width:0;max-width:100%}.readout{font-family:var(--font-mono);font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--code-background);padding:14px;border-radius:6px;margin:16px 0}.good{color:var(--success)}.bad{color:var(--destructive)}.status{min-height:28px;font-size:14px}.lab svg{display:block;width:100%;height:auto;min-height:90px}.lab svg text{fill:var(--foreground);font:14px var(--font-sans)}.lab svg .edge{stroke:var(--border);stroke-width:2}.lab svg .vertex{fill:var(--secondary);stroke:var(--border)}.lab svg .current{fill:var(--accent);stroke:var(--primary);stroke-width:2}.lab svg .failure{fill:var(--secondary);stroke:var(--destructive);stroke-width:3}.quiz{border-top:1px solid var(--border);margin:30px 0 20px;padding-top:20px}.quiz fieldset{border:0;margin:0;padding:0}.quiz legend{font-weight:650;margin-bottom:10px}.quiz label{display:block;padding:8px 10px;border-radius:5px}.quiz label:hover{background:var(--secondary)}.quiz input{margin-right:9px}.quiz button{margin-top:10px}.quiz-feedback{margin:10px 0;min-height:24px}.notes label{display:block;font-weight:650}.notes textarea{width:100%;min-height:95px;padding:12px;margin:8px 0;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--foreground)}.notes small{color:var(--muted)}.lesson-footer{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;border-top:1px solid var(--border);margin-top:30px;padding-top:20px}.lesson-footer label{display:flex;gap:8px;align-items:center}.pager{display:flex;gap:10px}.resources{font-size:14px}.resources li{margin:8px 0}.lane{display:grid;grid-template-columns:90px 1fr;gap:10px;margin:10px 0;align-items:center}.lane .track{display:flex;gap:7px;flex-wrap:wrap}.chip{max-width:100%;overflow-wrap:anywhere;line-height:1.5;padding:5px 10px;background:var(--secondary);border-radius:4px;font:13px var(--font-mono)}.flash{min-height:160px;display:grid;place-content:center;text-align:center;padding:20px;background:var(--secondary);border-radius:var(--radius)}.flash strong{font-size:20px}.flash p{margin-bottom:0}.js .lesson[hidden]{display:none}[hidden]{display:none!important}.only-print{display:none}.muted{color:var(--muted)}#search-status{font-size:13px;color:var(--muted)}@media(min-width:1250px){main{padding-left:64px;padding-right:64px}}@media(max-width:850px){.shell{grid-template-columns:220px minmax(0,1fr)}main{padding:30px 24px}.sidebar{padding:20px 12px}.top{padding:14px 18px}}@media(max-width:650px){.shell{display:block}.sidebar{position:static;height:auto;max-height:none;border-right:0;border-bottom:1px solid var(--border);padding:12px 16px}.sidebar details:not([open]) input{display:none}main{padding:24px 18px 44px}.top{padding:14px 16px}.top-actions{gap:8px}.top progress{display:none}.lab{padding:15px}.lane{grid-template-columns:1fr;gap:3px}.lesson h1{font-size:32px}pre{padding:15px 12px}.top-actions button{font-size:14px;padding:6px 9px}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}@media print{.top,.sidebar,.lesson-footer,.code-tools,.notes,.controls,.quiz button{display:none!important}.shell{display:block}main{padding:0;background:transparent}.lesson,.js .lesson[hidden]{display:block!important;max-width:none;break-before:page}.lesson:first-child{break-before:auto}details.answer>*{display:block}.only-print{display:block}.lab{break-inside:avoid}pre{white-space:pre-wrap;overflow:visible}pre code{white-space:pre-wrap}body{font-size:11pt;color:#000}a{color:inherit}h1,h2,h3{break-after:avoid}}
+/*FONTS*/
+/* Layout: sticky top bar; a sidebar (lessons grouped by lecture, a progress strip); one centered reading column. */
+:root{color-scheme:light;
+ --background:#ffffff;--surface:#f5f7fb;--card:#ffffff;--secondary:#f0f3f9;--secondary-strong:#e2e7f1;
+ --foreground:#1b2232;--muted:#596379;--border:#dfe4ee;--border-strong:#c3ccdc;
+ --primary:#2350cf;--primary-hover:#1a40ad;--primary-foreground:#ffffff;--accent:#eaf0fd;
+ --success:#16774a;--on-success:#ffffff;--destructive:#b3233f;--warning:#865600;
+ --code-background:#f5f7fa;--ring:#5a7fe8;--chart-1:#2350cf;--chart-2:#16774a;--chart-3:#b3233f;
+ --shadow:0 1px 2px rgb(20 30 60/.05),0 2px 8px rgb(20 30 60/.06);
+ --radius:12px;--radius-sm:8px;--top-h:64px;
+ --font-sans:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+ --font-display:"Lexend","Source Sans 3",system-ui,sans-serif;
+ --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Consolas,monospace}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;
+ --background:#111623;--surface:#0c111c;--card:#161d2d;--secondary:#1b2335;--secondary-strong:#273149;
+ --foreground:#e5e9f2;--muted:#a3adc1;--border:#29334a;--border-strong:#3b4762;
+ --primary:#8eaeff;--primary-hover:#b0c6ff;--primary-foreground:#0e1424;--accent:#1d2a4a;
+ --success:#6fd3a0;--on-success:#0c1a13;--destructive:#ff8fa5;--warning:#efc46e;
+ --code-background:#0d1320;--ring:#8eaeff;--chart-1:#8eaeff;--chart-2:#6fd3a0;--chart-3:#ff8fa5;
+ --shadow:0 1px 2px rgb(0 0 0/.3),0 2px 8px rgb(0 0 0/.25)}}
+:root[data-theme=dark]{color-scheme:dark;
+ --background:#111623;--surface:#0c111c;--card:#161d2d;--secondary:#1b2335;--secondary-strong:#273149;
+ --foreground:#e5e9f2;--muted:#a3adc1;--border:#29334a;--border-strong:#3b4762;
+ --primary:#8eaeff;--primary-hover:#b0c6ff;--primary-foreground:#0e1424;--accent:#1d2a4a;
+ --success:#6fd3a0;--on-success:#0c1a13;--destructive:#ff8fa5;--warning:#efc46e;
+ --code-background:#0d1320;--ring:#8eaeff;--chart-1:#8eaeff;--chart-2:#6fd3a0;--chart-3:#ff8fa5;
+ --shadow:0 1px 2px rgb(0 0 0/.3),0 2px 8px rgb(0 0 0/.25)}
 
-/* Keep controls outside the scrollable lesson region. */
-.sidebar details{height:100%}
-.sidebar summary{line-height:26px}
-.sidebar:has(details:not([open])){height:auto}
-.contents-body{height:var(--contents-height,610px);min-height:0;display:flex;flex-direction:column;margin-top:8px}
-.contents-search{flex:none;padding:8px 0 14px}
-.contents-search label{display:block;font-size:14px}
-.contents-search #search-status{margin:8px 0 0}
-.lesson-scroll{flex:1;min-height:0;overflow-y:scroll;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:auto;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
-.lesson-scroll::-webkit-scrollbar{width:10px;-webkit-appearance:none}
-.lesson-scroll::-webkit-scrollbar-track{background:var(--secondary);border-radius:8px}
-.lesson-scroll::-webkit-scrollbar-thumb{background:var(--muted);border:2px solid var(--secondary);border-radius:8px}
-@supports not selector(::-webkit-scrollbar){.lesson-scroll{scrollbar-color:var(--muted) var(--secondary)}}
-.lesson-scroll:focus-visible{outline-offset:2px}
-.lesson-scroll .toc{padding:0 5px 8px 0}
-.contents-footer{flex:none;display:flex;gap:8px;justify-content:space-between;align-items:center;padding-top:10px;font-size:12px;font-variant-numeric:tabular-nums}
-.contents-paging{display:flex;gap:6px}
-.contents-paging button{width:34px;min-height:34px;padding:3px;font-size:18px;line-height:1}
-.contents-paging button:disabled{opacity:.35}
-.sidebar details:not([open]) .contents-body{display:none}
-.videos{margin:20px 0;padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card)}.videos h2{margin:0 0 2px;font-size:18px}.videos-note{margin:0 0 10px;font-size:13px;color:var(--muted)}.video{padding:10px 0;border-top:1px solid var(--border)}.video-play{display:flex;gap:12px;align-items:center;width:100%;text-align:left;padding:10px 12px}.video-icon{flex:none;display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:var(--primary);color:var(--primary-foreground);font-size:13px}.video-name{display:block;font-weight:650;line-height:1.35}.video-meta{display:block;font-size:13px;color:var(--muted)}.video-about{margin:8px 0 4px;font-size:14px}.video-links{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;font-size:13px}.video-frame{aspect-ratio:16/9;margin-bottom:8px;border-radius:6px;overflow:hidden;background:#000}.video-frame iframe{display:block;width:100%;height:100%;border:0}.video-close{padding:3px 10px;font-size:13px}@media print{.videos{display:none!important}}
-@media(max-width:650px){
- .sidebar details{height:auto}
- .contents-body{height:min(500px,var(--contents-height,500px))}
- .contents-paging button{width:44px;min-height:44px}
+/* Base */
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:calc(var(--top-h) + 16px)}
+body{margin:0;color:var(--foreground);background:var(--surface);font:17px/1.7 var(--font-sans);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+button,input,select,textarea{font:inherit}a{color:var(--primary);text-underline-offset:3px;text-decoration-thickness:1px}a:hover{color:var(--primary-hover)}
+:focus-visible{outline:3px solid var(--ring);outline-offset:2px}
+button,select,input[type=search],input[type=number],input[type=text]{border:1px solid var(--border-strong);border-radius:var(--radius-sm);padding:7px 14px;color:var(--foreground);background:var(--card)}
+button{cursor:pointer;font-weight:600;font-size:15px;line-height:1.4;transition:background-color .2s,border-color .2s,color .2s,box-shadow .2s,transform .15s cubic-bezier(.3,.7,.4,1)}
+button:hover{background:var(--secondary);border-color:var(--muted)}button:disabled{opacity:.45;cursor:default}button:disabled:hover{background:var(--card);border-color:var(--border-strong)}
+button.primary,.quiz>button,.numcheck button{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary)}
+button.primary:hover,.quiz>button:hover,.numcheck button:hover{background:var(--primary-hover);border-color:var(--primary-hover)}
+.skip{position:absolute;left:12px;top:-90px;z-index:40;background:var(--card);padding:12px;border-radius:var(--radius-sm)}.skip:focus{top:12px}
+[hidden]{display:none!important}.js .lesson[hidden]{display:none}.only-print{display:none}.muted{color:var(--muted)}
+
+/* Top bar */
+.top{position:sticky;top:0;z-index:30;height:var(--top-h);display:flex;gap:16px;justify-content:space-between;align-items:center;padding:0 max(16px,env(safe-area-inset-right,0px)) 0 max(20px,env(safe-area-inset-left,0px));background:var(--card);border-bottom:1px solid var(--border)}
+.brand{display:flex;align-items:center;gap:12px;margin-right:auto;color:var(--foreground);text-decoration:none;min-width:0}.brand:hover{color:var(--foreground)}
+.brand-mark{flex:none;display:grid;place-items:center;min-width:44px;height:38px;padding:0 7px;border-radius:10px;background:var(--primary);color:var(--primary-foreground);font:700 14px/1 var(--font-display);letter-spacing:-.03em}
+.brand-name{display:flex;flex-direction:column;min-width:0;font:600 17px/1.2 var(--font-display);letter-spacing:-.01em}
+.brand-name small{font:400 13px/1.3 var(--font-sans);color:var(--muted);letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top-actions{display:flex;gap:8px;align-items:center}
+.top-actions button{background:transparent;border-color:transparent;color:var(--foreground);padding:7px 12px;font-size:14px}
+.top-actions button:hover{background:var(--secondary);border-color:var(--border)}
+/* theme switch: the sun's rays fold away and a shadow slides over it to make the moon */
+.top-actions .theme-toggle{display:grid;place-items:center;width:40px;height:40px;padding:0;border-radius:10px}
+.theme-toggle svg{width:21px;height:21px;overflow:visible}
+.theme-sun{transform-origin:12px 12px;transform:scale(.56)}
+.theme-cut{transform:translate(10px,-10px)}
+.theme-rays{transform-origin:12px 12px}
+:root[data-theme=dark] .theme-sun{transform:scale(1)}
+:root[data-theme=dark] .theme-cut{transform:none}
+:root[data-theme=dark] .theme-rays{transform:rotate(-90deg) scale(.4);opacity:0}
+.theme-toggle.ready .theme-sun{transition:transform .5s cubic-bezier(.4,1.6,.5,1)}
+.theme-toggle.ready .theme-cut{transition:transform .45s cubic-bezier(.3,.8,.3,1)}
+.theme-toggle.ready .theme-rays{transition:transform .5s cubic-bezier(.3,.8,.3,1),opacity .3s}
+
+/* Shell */
+.shell{display:grid;grid-template-columns:304px minmax(0,1fr);min-height:calc(100vh - var(--top-h))}
+.sidebar{position:sticky;top:var(--top-h);align-self:start;height:calc(100vh - var(--top-h));height:calc(100dvh - var(--top-h));min-height:0;display:flex;flex-direction:column;padding:22px 16px 18px 22px;background:var(--surface);border-right:1px solid var(--border)}
+.side-head{display:none}
+.contents-toggle{display:none}
+.sidebar-toggle{flex:none;display:grid;place-items:center;width:38px;height:38px;margin:0 -6px 0 -8px;padding:0;border:0;border-radius:10px;background:transparent;color:var(--muted)}
+.sidebar-toggle:hover{background:var(--secondary-strong);color:var(--foreground)}
+.sidebar-toggle svg{width:18px;height:18px}
+.shell.animate{transition:grid-template-columns .25s cubic-bezier(.2,.8,.2,1)}
+/* collapsed (wider than a phone): a narrow rail with the expand button and the progress strip standing upright */
+@media(min-width:651px){
+ .shell.collapsed{grid-template-columns:58px minmax(0,1fr)}
+ .shell.collapsed .sidebar{padding:22px 10px 18px;overflow:hidden}
+ .shell.collapsed .lesson-scroll{display:none}
+ .shell.collapsed .side-foot{flex:1;flex-direction:column;padding-top:0;border-top:0}
+ .shell.collapsed .trace{flex:1;flex-direction:column;width:12px;height:auto}
+ .shell.collapsed .trace-part{flex-direction:column;width:100%}
+ .shell.collapsed .trace [data-id]{width:6px;height:auto;min-height:1px}
+ .shell.collapsed .trace [data-id].current{width:12px}
 }
+
+.lesson-scroll{flex:1;min-height:0;margin:0 -8px 0 -10px;padding:0 6px 0 0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--border-strong) transparent}
+.lesson-scroll::-webkit-scrollbar{width:8px}
+.lesson-scroll::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:8px}
+.toc{list-style:none;margin:0;padding:0 0 16px}
+.toc .group{margin:22px 0 4px;padding:0 10px;font:600 13px/1.3 var(--font-display);color:var(--muted)}
+.toc a{display:flex;align-items:baseline;gap:10px;padding:6px 10px;border-radius:8px;color:var(--foreground);text-decoration:none;font-size:15px;line-height:1.35}
+.toc a:hover{background:var(--secondary-strong);color:var(--foreground)}
+.toc a[aria-current=page]{background:var(--accent);color:var(--primary);font-weight:600}
+.toc-title{flex:1;min-width:0}
+.toc .done{flex:none;color:var(--success);font-size:13px;font-weight:700}
+.side-foot{flex:none;display:flex;align-items:center;gap:12px;padding-top:10px;border-top:1px solid var(--border)}
+.trace{flex:1;min-width:0;display:flex;gap:4px;align-items:center;height:12px}
+.trace-part{display:flex;gap:1px;align-items:center;min-width:0}
+.trace [data-id]{flex:1;min-width:1px;height:6px;border-radius:1px;background:var(--secondary-strong);cursor:pointer;transition:background-color .2s,height .2s}
+.trace [data-id].done{background:var(--success)}
+.trace [data-id].current{height:12px;background:var(--primary)}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+
+/* Lesson */
+main{min-width:0;container:main/inline-size;padding:44px max(clamp(16px,3.5vw,56px),env(safe-area-inset-right,0px)) 96px max(clamp(16px,3.5vw,56px),env(safe-area-inset-left,0px));background:var(--background)}
+main:focus{outline:none}
+/* the reading column grows with main (so it widens when the sidebar collapses) but stops short of the full width */
+.lesson{max-width:720px;max-width:clamp(640px,86cqi,960px);margin:auto;font-size:18px}
+.chapter{margin:0 0 10px;font:600 14px/1.4 var(--font-sans);color:var(--primary)}
+.lesson h1,.lesson h2,.lesson h3{font-family:var(--font-display);text-wrap:balance;color:var(--foreground)}
+.lesson h1{font-weight:600;font-size:clamp(30px,3.4vw,40px);line-height:1.18;letter-spacing:-.025em;margin:6px 0 18px}
+.lesson h2{font-weight:600;font-size:24px;line-height:1.3;letter-spacing:-.015em;margin:44px 0 12px}
+.lesson h3{font-weight:500;font-size:19px;line-height:1.4;margin:30px 0 8px}
+.lesson p{margin:14px 0}.lesson ul,.lesson ol{padding-left:24px}.lesson li{margin:8px 0}.lesson li::marker{color:var(--muted)}
+.lead{font-size:21px;line-height:1.55;color:var(--foreground)}
+.goal{padding:14px 18px;margin:24px 0;background:var(--accent);border-radius:var(--radius)}
+.callout{padding:16px 20px;background:var(--accent);border-radius:var(--radius);margin:24px 0}
+.callout p:first-child{margin-top:0}.callout p:last-child{margin-bottom:0}
+code{font:.86em/1.6 var(--font-mono);font-variant-ligatures:none;overflow-wrap:anywhere;background:var(--secondary);padding:.1em .35em;border-radius:5px}
+pre{background:var(--code-background);border:1px solid var(--border);padding:18px 20px;overflow-x:auto;border-radius:var(--radius);margin:20px 0 0;max-width:100%;tab-size:4}
+pre code{padding:0;background:none;overflow-wrap:normal;white-space:pre;font-size:13.5px;line-height:1.65}
+/* Motion. Buttons press in; the main ones lift on hover; content that arrives fades up.
+   Reduced motion switches all of it off (the rule near the end). */
+:is(.btn,button.primary,.quiz>button,.numcheck button,.controls button):not(:disabled):hover{transform:translateY(-1px);box-shadow:0 6px 14px -8px color-mix(in srgb,var(--foreground) 45%,transparent)}
+:is(button,.btn,.quiz>button,.numcheck button,.controls button):not(:disabled):active{transform:scale(.96);box-shadow:none}
+.theme-toggle svg,.sidebar-toggle svg{transition:transform .3s cubic-bezier(.3,1.5,.5,1)}
+.theme-toggle:hover svg{transform:rotate(-18deg)}
+.sidebar-toggle:hover svg{transform:scaleX(-1)}
+.toc a{transition:background-color .2s,color .2s}
+:is(details.answer,details.hint)[open]>:not(summary){animation:motion-down .3s ease-out}
+.lesson:not([hidden]){animation:motion-up .4s cubic-bezier(.2,.7,.3,1)}
+.arrive,.pop{animation:motion-up .3s ease-out}
+.quiz-feedback.bad.pop{animation:motion-up .3s ease-out,motion-shake .4s ease-in-out}
+.video-frame,.video-poster span{transition:transform .2s}.video-poster:hover span{transform:scale(1.05)}
+@keyframes motion-up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes motion-down{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+@keyframes motion-shake{0%,100%{translate:0}20%,60%{translate:-4px}40%,80%{translate:4px}}
+::view-transition-old(root),::view-transition-new(root){animation:none;mix-blend-mode:normal}
+.code-tools{display:flex;justify-content:flex-end;margin:6px 0 20px}
+.code-tools button{font-size:13px;font-weight:600;padding:3px 10px;color:var(--muted);background:transparent;border-color:transparent}
+.code-tools button:hover{color:var(--foreground);background:var(--secondary)}
+figure{margin:32px 0}
+figcaption{font-size:15px;line-height:1.55;color:var(--muted);margin-top:12px}
+.flow{display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;margin:20px 0}
+.node{max-width:100%;overflow-wrap:anywhere;background:var(--secondary);padding:14px 18px;min-width:90px;text-align:center;border-radius:var(--radius-sm)}
+.node small{display:block;color:var(--muted)}.arrow{color:var(--muted);font-size:22px}.branch{display:grid;gap:12px}.diagram-label{text-align:center;color:var(--muted);font-size:14px}
+.table-wrap{overflow-x:auto;margin:22px 0;border:1px solid var(--border);border-radius:var(--radius)}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+.table-wrap table{margin:0}
+th,td{text-align:left;vertical-align:top;padding:11px 14px;border-bottom:1px solid var(--border)}
+tr:last-child>td{border-bottom:0}
+th{font-weight:600;background:var(--surface);font-size:14px}
+summary{cursor:pointer}
+/* disclosures (answers, hints, solutions): a card whose header row opens with a turning chevron */
+:is(details.answer,details.hint){margin:16px 0;padding:0;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+:is(details.answer,details.hint)>summary{display:flex;align-items:center;gap:12px;padding:12px 16px;font-weight:600;cursor:pointer;list-style:none;transition:background-color .2s}
+:is(details.answer,details.hint)>summary::-webkit-details-marker{display:none}
+:is(details.answer,details.hint)>summary::before{content:"";flex:none;width:7px;height:7px;margin:0 3px 2px 2px;border-right:2px solid var(--primary);border-bottom:2px solid var(--primary);transform:rotate(-45deg);transition:transform .25s cubic-bezier(.3,1.4,.5,1)}
+:is(details.answer,details.hint)[open]>summary::before{transform:rotate(45deg);margin-bottom:5px}
+:is(details.answer,details.hint)>summary:hover{background:var(--secondary)}
+:is(details.answer,details.hint)[open]>summary{border-bottom:1px solid var(--border)}
+:is(details.answer,details.hint)>:not(summary){margin-left:18px;margin-right:18px}
+:is(details.answer,details.hint)>:last-child:not(summary){margin-bottom:16px}
+details.hint{background:transparent}details.hint>summary{color:var(--muted)}details.hint>summary::before{border-color:var(--muted)}
+details.solution>summary::before{border-color:var(--success)}
+.resources{font-size:15px}.resources li{margin:8px 0}
+
+/* Videos */
+.videos{margin:28px 0;padding:18px 20px 8px;border-radius:var(--radius);background:var(--surface)}
+.lesson .videos h2{margin:0;font-size:17px;letter-spacing:0}
+.videos-note{margin:2px 0 8px!important;font-size:14px;color:var(--muted)}
+.video{padding:14px 0 10px}.video+.video{border-top:1px solid var(--border)}
+.video-head{display:flex;gap:14px;align-items:baseline;margin-top:12px}
+.video-text{flex:1;min-width:0}
+.video-length{flex:none;font-size:14px;color:var(--muted);font-variant-numeric:tabular-nums}
+.video-name{display:block;font:600 16px/1.35 var(--font-display)}
+.video-meta{display:block;font-size:14px;color:var(--muted)}
+.video-about{margin:6px 0 6px!important;font-size:15px}
+.video-links{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center;font-size:14px}
+.video-frame{aspect-ratio:16/9;max-width:100%;border-radius:var(--radius-sm);overflow:hidden;background:#000}
+.video-frame iframe{display:block;width:100%;height:100%;border:0}
+.video-poster{position:relative;display:grid;place-items:center;width:100%;height:100%;color:#fff;text-decoration:none}
+.video-poster img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.7;transition:opacity .2s}
+.video-poster span{position:relative;padding:10px 20px;border-radius:99px;background:rgba(0,0,0,.72);font-weight:600}
+.video-poster:hover{color:#fff}.video-poster:hover img{opacity:.85}
+
+/* Labs */
+.lab{border:1px solid var(--border);border-radius:var(--radius);padding:22px 24px;margin:32px 0;background:var(--card);box-shadow:var(--shadow)}
+.lesson .lab h2{font-size:19px;margin-top:0}
+.controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0}
+.controls button{font-size:14px;padding:6px 12px}
+.controls label{min-width:0;max-width:100%;display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:15px}
+.controls input[type=number]{width:75px}.controls select{min-width:0;max-width:100%}
+.readout{font-family:var(--font-mono);font-variant-ligatures:none;font-size:13.5px;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--code-background);border:1px solid var(--border);padding:14px 16px;border-radius:var(--radius-sm);margin:16px 0}
+.good{color:var(--success)}.bad{color:var(--destructive)}.status{min-height:28px;font-size:15px}
+.lab svg{display:block;width:100%;height:auto;min-height:90px}
+.lab svg text{fill:var(--foreground);font:14px var(--font-sans)}
+.lab svg .edge{stroke:var(--border-strong);stroke-width:2}.lab svg .vertex{fill:var(--secondary);stroke:var(--border-strong)}
+.lab svg .current{fill:var(--accent);stroke:var(--primary);stroke-width:2}.lab svg .failure{fill:var(--secondary);stroke:var(--destructive);stroke-width:3}
+.lane{display:grid;grid-template-columns:90px 1fr;gap:10px;margin:10px 0;align-items:center}.lane .track{display:flex;gap:7px;flex-wrap:wrap}
+.chip{max-width:100%;overflow-wrap:anywhere;line-height:1.5;padding:5px 10px;background:var(--secondary);border-radius:6px;font:13px var(--font-mono)}
+.flash{min-height:160px;display:grid;place-content:center;text-align:center;padding:20px;background:var(--secondary);border-radius:var(--radius)}.flash strong{font-size:20px}.flash p{margin-bottom:0}
+
+/* Quizzes */
+.quiz{margin:36px 0 28px;padding-top:22px;border-top:1px solid var(--border)}
+.quiz fieldset{border:0;margin:0;padding:0;min-width:0;display:grid;gap:8px}
+.quiz legend{font:600 17px/1.45 var(--font-sans);margin-bottom:12px;padding:0}
+.quiz label{display:flex;gap:10px;align-items:baseline;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;line-height:1.5;transition:border-color .15s,background-color .15s}
+.quiz label:hover{border-color:var(--primary)}
+.quiz label:has(input:checked){border-color:var(--primary);background:var(--accent)}
+.quiz input{margin:0;flex:none;accent-color:var(--primary);transform:translateY(2px)}
+.quiz>button{margin-top:16px}
+.quiz-feedback{margin:12px 0 0!important;min-height:0;line-height:1.55}
+.quiz-feedback.good,.quiz-feedback.bad{padding:12px 16px;border-radius:var(--radius-sm)}
+.quiz-feedback.good{background:color-mix(in srgb,var(--success) 12%,var(--card))}
+.quiz-feedback.bad{background:color-mix(in srgb,var(--destructive) 10%,var(--card))}
+.quiz-feedback:empty{display:none}
+
+/* Notes and footer */
+.lesson-footer{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;border-top:1px solid var(--border);margin-top:28px;padding-top:24px}
+.complete{display:inline-flex;gap:10px;align-items:center;min-height:44px;padding:0 20px 0 14px;border:1px solid var(--primary);border-radius:var(--radius-sm);background:var(--primary);color:var(--primary-foreground);font-weight:600;cursor:pointer;user-select:none}
+.complete:hover{background:var(--primary-hover);border-color:var(--primary-hover)}
+.complete:active{transform:scale(.97)}
+.complete{transition:background-color .25s,color .25s,border-color .25s,transform .15s}
+.complete-mark{position:relative;display:grid;flex:none}
+.complete-mark svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.complete.compact{min-height:38px;gap:8px;padding:0 14px 0 10px;font-size:14px}.complete.compact input{width:18px;height:18px}
+.complete-mark path{fill:none;stroke:#fff;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:12;stroke-dashoffset:12;transition:stroke-dashoffset .3s ease-out .12s}
+.complete:has(input:checked) .complete-mark path{stroke-dashoffset:0}
+/* plays once, when the lesson is completed (the class is added on the change event) */
+.complete.celebrate{animation:complete-pop .45s cubic-bezier(.3,1.6,.5,1),complete-ring .7s ease-out}
+.complete.celebrate .complete-mark input{animation:complete-dot .4s cubic-bezier(.3,1.8,.5,1)}
+.complete.celebrate .when-done{animation:complete-text .35s ease-out}
+@keyframes complete-pop{0%{transform:scale(.96)}50%{transform:scale(1.05)}100%{transform:scale(1)}}
+@keyframes complete-ring{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--success) 45%,transparent)}100%{box-shadow:0 0 0 14px color-mix(in srgb,var(--success) 0%,transparent)}}
+@keyframes complete-dot{0%{transform:scale(.5)}100%{transform:scale(1)}}
+@keyframes complete-text{0%{opacity:0;transform:translateY(5px)}100%{opacity:1;transform:none}}
+.complete input{flex:none;display:grid;color:inherit;width:20px;height:20px;margin:0;border:2px solid currentColor;border-radius:50%;background:transparent;-webkit-appearance:none;appearance:none;cursor:pointer;transition:background-color .2s,border-color .2s}
+.complete input:focus-visible{outline:2px solid var(--ring);outline-offset:3px}
+.complete .when-done{display:none}.complete .when-todo,.complete .when-done{transform-origin:left center}
+.complete:has(input:checked){background:color-mix(in srgb,var(--success) 12%,var(--card));border-color:color-mix(in srgb,var(--success) 35%,var(--card));color:var(--success)}
+.complete:has(input:checked) input{border-color:var(--success);background:var(--success)}
+.complete:has(input:checked) .when-todo{display:none}.complete:has(input:checked) .when-done{display:inline}
+.lesson-footer:has(.complete input:not(:checked)) .pager .next{background:var(--card);border-color:var(--border-strong);color:var(--foreground)}
+.lesson-footer:has(.complete input:not(:checked)) .pager .next:hover{background:var(--secondary)}
+.complete-group{display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0}
+.complete-caption{max-width:320px;font-size:13.5px;line-height:1.4;color:var(--muted)}
+.complete-caption:empty{display:none}
+.complete-caption.good{color:var(--success)}
+.lesson-footer .save-state{flex-basis:100%;margin:0;font-size:14px;color:var(--destructive)}
+.lesson>.auto-note{position:absolute;width:1px;height:1px;margin:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.pager{display:flex;gap:10px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:9px 18px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);font-weight:600;font-size:15px;text-decoration:none;color:var(--foreground);background:var(--card);transition:background-color .2s,border-color .2s,color .2s,box-shadow .2s,transform .15s cubic-bezier(.3,.7,.4,1)}
+.btn:hover{background:var(--secondary);color:var(--foreground)}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}
+.btn.primary:hover{background:var(--primary-hover);border-color:var(--primary-hover);color:var(--primary-foreground)}
+
+@media(min-width:1440px){.shell{grid-template-columns:330px minmax(0,1fr)}}
+/* wide pieces spill past the text by up to 64px a side, only into space main actually has */
+.lesson>figure,.lesson>.lab,.lesson>pre,.lesson>.code-tools,.lesson>.table-wrap,.lesson>.problem{margin-left:calc(-1*clamp(0px,(100cqi - 100%)/2,64px));margin-right:calc(-1*clamp(0px,(100cqi - 100%)/2,64px))}
+@media(max-width:1100px){.brand-name small{display:none}.shell{grid-template-columns:272px minmax(0,1fr)}}
+@media(max-width:860px){.shell{grid-template-columns:236px minmax(0,1fr)}.sidebar{padding:18px 10px 14px 16px}main{padding-top:32px}}
+@media(max-width:650px){
+ :root{--top-h:56px}
+ body{font-size:17px}
+ .top{gap:10px}.brand-mark{min-width:40px;height:34px;font-size:13px}.brand-name{font-size:16px}
+ .shell{display:block}
+ .sidebar{position:static;height:auto;border-right:0;border-bottom:1px solid var(--border);padding:10px 16px 12px}
+ .side-head{display:flex;align-items:center;min-height:38px;margin-bottom:8px}
+ .contents-toggle{display:flex;align-items:center;gap:8px;max-width:calc(100% - 46px);min-height:38px;padding:0 4px;border:0;background:transparent;font:600 15px var(--font-sans);text-align:left}
+ .contents-toggle span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .contents-toggle svg{flex:none;width:12px;height:12px;color:var(--muted);transition:transform .2s}
+ .sidebar.expanded .contents-toggle svg{transform:rotate(180deg)}
+ .sidebar-toggle{display:none}
+ .side-foot{order:1;padding-top:0;border-top:0}
+ .lesson-scroll{order:2;display:none;max-height:60vh;margin-top:10px}
+ .sidebar.expanded .lesson-scroll{display:block}
+ main{padding:26px 16px 64px}
+ .lesson h1{font-size:29px}.lead{font-size:18px}
+ .lab{padding:16px}.videos{padding:14px 16px 4px}
+ .lane{grid-template-columns:1fr;gap:3px}
+ pre{padding:14px}
+ .lesson-footer{flex-direction:column;align-items:stretch}.pager{justify-content:space-between}
+}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important;animation:none!important}}
+@media print{.top,.sidebar,.lesson-footer,.code-tools,.controls,.quiz button{display:none!important}.shell{display:block}body,main{padding:0;background:#fff}.lesson,.js .lesson[hidden]{display:block!important;max-width:none;break-before:page}.lesson:first-child{break-before:auto}details.answer>*{display:block}.only-print{display:block}.lab,.quiz{break-inside:avoid;box-shadow:none}pre{white-space:pre-wrap;overflow:visible}pre code{white-space:pre-wrap}body{font-size:11pt;color:#000}a{color:inherit}h1,h2,h3{break-after:avoid}.videos{display:none!important}}
 </style>
 </head>
 <body>
 <a class="skip" href="#content">Skip to lesson</a>
-<header class="top"><a class="brand" href="#orientation">TLA+ course</a><div class="top-actions"><span id="progress-text">0 / 28 studied</span><progress id="course-progress" max="28" value="0" aria-label="Lessons studied"></progress><button id="save-progress" type="button">Save progress</button><span id="progress-save-status" class="save-state" role="status" aria-live="polite">Saved in this browser.</span><button id="theme" type="button">Dark mode</button><button id="print" type="button">Print course</button></div></header>
+<header class="top"><button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="Collapse sidebar" title="Collapse sidebar" aria-expanded="true"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.25 3v10" stroke="currentColor" stroke-width="1.5"/></svg></button><a class="brand" href="#orientation"><span class="brand-mark" aria-hidden="true">TLA+</span><span class="brand-name">TLA+ Course<small>Lamport’s video lectures, then real systems</small></span></a><div class="top-actions"><button id="theme" class="theme-toggle" type="button" aria-label="Switch to dark mode" title="Switch to dark mode"><svg viewBox="0 0 24 24" aria-hidden="true"><mask id="theme-moon"><rect width="24" height="24" fill="#fff"/><circle class="theme-cut" cx="17" cy="7" r="7" fill="#000"/></mask><circle class="theme-sun" cx="12" cy="12" r="9" fill="currentColor" mask="url(#theme-moon)"/><path class="theme-rays" d="M12 1.5v2M12 20.5v2M1.5 12h2M20.5 12h2M4.6 4.6L6 6M18 18l1.4 1.4M4.6 19.4L6 18M18 6l1.4-1.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div></header>
 <div class="shell">
-<aside class="sidebar">
-<details id="contents" open>
-<summary>Course contents</summary>
-<div class="contents-body">
-<div class="contents-search">
-<label for="search" class="muted">Find a lesson</label>
-<input id="search" type="search" autocomplete="off">
-<p id="search-status" aria-live="polite" hidden></p>
+<aside class="sidebar" id="sidebar">
+<div class="side-head">
+<button id="contents-toggle" class="contents-toggle" type="button" aria-expanded="false" aria-controls="lesson-scroll"><span id="contents-current">Lessons</span><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 4.5l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
 </div>
-<nav id="lesson-scroll" class="lesson-scroll" aria-label="Lessons" tabindex="0">
+<nav id="lesson-scroll" class="lesson-scroll" aria-label="Lessons">
 <ol class="toc" id="toc"></ol>
 </nav>
-<div class="contents-footer">
-<span id="lesson-range">28 lessons</span>
-<div class="contents-paging">
-<button id="lessons-up" type="button" aria-label="Scroll lessons up" title="Scroll lessons up">↑</button>
-<button id="lessons-down" type="button" aria-label="Scroll lessons down" title="Scroll lessons down">↓</button>
+<div class="side-foot">
+<div class="trace" id="trace" aria-hidden="true"></div>
+<div class="sr-only"><progress id="course-progress" max="28" value="0" aria-label="Lessons studied"></progress><span id="progress-text">0 / 28 studied</span></div>
 </div>
-</div>
-</div>
-</details>
 </aside>
 <main id="content" tabindex="-1">
 <noscript><p class="callout">JavaScript is disabled. All lessons remain readable; enable JavaScript for simulations, quizzes, and progress.</p></noscript>
@@ -75,7 +320,7 @@
 document.documentElement.classList.add('js');
 const lessons=[...document.querySelectorAll('.lesson')];
 const key='tla-course-v1';
-let state={done:{},notes:{},answers:{},reading:{},current:'orientation',theme:'light',updatedAt:0};
+let state={done:{},notes:{},answers:{},reading:{},current:'orientation',theme:matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light',updatedAt:0};
 let storage=true;
 let uninstalling=false;
 let diskStatus=window.__courseSavePath?'saving':'browser';
@@ -102,8 +347,9 @@ const appSnapshot=window.__courseProgress;
 restoreState(appSnapshot&&(!localSnapshot||(appSnapshot.updatedAt||0)>=(localSnapshot.updatedAt||0))?appSnapshot:localSnapshot);
 function showSaveStatus(){
  if(uninstalling)return;
- let message=diskStatus==='saved'?'Saved to this Mac.':diskStatus==='saving'?'Saving…':diskStatus==='error'?'App save failed. Use Save progress to retry.':storage?'Saved in this browser.':'Browser storage is unavailable. Keep this tab open.';
- document.querySelectorAll('.save-state').forEach(el=>{el.textContent=message;el.classList.toggle('bad',diskStatus==='error');});
+ // only problems are shown: a failed save to the Mac, or no browser storage at all
+ const message=diskStatus==='error'?'Saving to this Mac failed. Your next change tries again.':!storage&&!window.__courseSavePath?'This browser can’t store progress. Keep this tab open.':'';
+ document.querySelectorAll('.save-state').forEach(el=>{el.textContent=message;el.hidden=!message;});
 }
 function flushProgress(){
  if(uninstalling)return Promise.resolve(false);
@@ -153,7 +399,6 @@ function saveBeforeLeaving(){
   else flushProgress();
  }
 }
-document.getElementById('save-progress').addEventListener('click',()=>{captureReading();save();flushProgress();});
 window.addEventListener('storage',event=>{
  if(event.key!==key||!event.newValue)return;
  try{
@@ -164,15 +409,13 @@ window.addEventListener('storage',event=>{
    const check=lesson.querySelector('.lesson-footer input[type="checkbox"]');
    if(check)check.checked=!!state.done[lesson.id];
    const mark=toc.querySelector('a[href="#'+lesson.id+'"] .done');if(mark)mark.hidden=!state.done[lesson.id];
-   const notes=lesson.querySelector('.notes textarea');
-   if(notes&&document.activeElement!==notes)notes.value=state.notes[lesson.id]||'';
   });
   updateProgress();
  }catch{}
 });
 window.addEventListener('course-uninstall',()=>{
  stopVideo();uninstalling=true;clearTimeout(saveTimer);clearTimeout(readingTimer);pendingDiskSnapshot=null;
- try{localStorage.removeItem(key);}catch{}
+ try{localStorage.removeItem(key);localStorage.removeItem(sidebarKey);}catch{}
  window.__courseSavePath=undefined;
  document.querySelector('.top').hidden=true;document.querySelector('.shell').hidden=true;
  const message=document.createElement('p');message.className='callout';message.setAttribute('role','status');message.textContent='TLA+ Course was uninstalled.';document.body.append(message);
@@ -182,61 +425,52 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 window.addEventListener('scroll',()=>{if(!restoringScroll){captureReading();clearTimeout(readingTimer);readingTimer=setTimeout(save,400);}},{passive:true});
 document.addEventListener('click',event=>{const link=event.target.closest('a[href^="#"]');if(link&&lessons.some(l=>'#'+l.id===link.hash)){captureReading();save();}});
 
+// a checkbox dressed as a button: "Mark as completed" turns into a green "Completed", with a short celebration when ticked
+function completeToggle(box,todoText,doneText,compact){
+ const label=document.createElement('label');label.className='complete'+(compact?' compact':'');label.title='Click again to undo';
+ const mark=document.createElement('span');mark.className='complete-mark';mark.append(box);mark.insertAdjacentHTML('beforeend','<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 10.4l2.7 2.7 5.3-5.6"/></svg>');
+ const todo=document.createElement('span'),finished=document.createElement('span');todo.className='when-todo';todo.textContent=todoText;finished.className='when-done';finished.textContent=doneText;
+ label.append(mark,todo,finished);
+ label.addEventListener('animationend',event=>{if(event.target===label&&event.animationName==='complete-ring')label.classList.remove('celebrate');});
+ box.addEventListener('change',()=>{label.classList.remove('celebrate');if(box.checked){void label.offsetWidth;label.classList.add('celebrate');}});
+ return label;
+}
 const toc=document.getElementById('toc');let part='';
 lessons.forEach((lesson,index)=>{
- if(lesson.dataset.part!==part){part=lesson.dataset.part;const li=document.createElement('li');li.className='group';li.textContent=part;toc.append(li);}
+ // a heading per lecture or part, without its "Lecture N" prefix; the opening lesson needs none
+ if(lesson.dataset.part!==part){part=lesson.dataset.part;if(index>0){const li=document.createElement('li');li.className='group';li.textContent=part.split(' · ').at(-1);toc.append(li);}}
  const li=document.createElement('li'),a=document.createElement('a');a.href='#'+lesson.id;
- const num=document.createElement('span');num.className='num';num.textContent=index+1;
- const title=document.createElement('span');title.textContent=lesson.dataset.title;
+ const title=document.createElement('span');title.className='toc-title';title.textContent=lesson.dataset.title;
  const done=document.createElement('span');done.className='done';done.setAttribute('aria-label','Studied');done.textContent='✓';done.hidden=!state.done[lesson.id];
- a.append(num,title,done);li.append(a);toc.append(li);
- a.addEventListener('click',()=>{if(matchMedia('(max-width:650px)').matches)document.getElementById('contents').open=false;});
- const notes=document.createElement('div');notes.className='notes';const label=document.createElement('label');label.htmlFor='notes-'+lesson.id;label.textContent='Your explanation';const input=document.createElement('textarea');input.id=label.htmlFor;input.value=typeof state.notes[lesson.id]==='string'?state.notes[lesson.id]:'';input.placeholder='Explain the rule, assumption, or counterexample in your own words.';const noteStatus=document.createElement('small');noteStatus.className='save-state';noteStatus.textContent=diskStatus==='saved'?'Saved to this Mac.':storage?'Saved in this browser.':'Browser storage is unavailable; notes last for this session.';notes.append(label,input,noteStatus);lesson.append(notes);input.addEventListener('input',()=>{state.notes[lesson.id]=input.value;save();});
- const footer=document.createElement('div');footer.className='lesson-footer';const completeLabel=document.createElement('label'),complete=document.createElement('input');complete.type='checkbox';complete.checked=!!state.done[lesson.id];completeLabel.append(complete,document.createTextNode('Mark studied'));complete.addEventListener('change',()=>{state.done[lesson.id]=complete.checked;done.hidden=!complete.checked;save();updateProgress();});
- const pager=document.createElement('div');pager.className='pager';if(index>0){const prev=document.createElement('a');prev.href='#'+lessons[index-1].id;prev.textContent='Previous';pager.append(prev);}if(index<lessons.length-1){const next=document.createElement('a');next.href='#'+lessons[index+1].id;next.textContent='Next lesson';pager.append(next);}footer.append(completeLabel,pager);lesson.append(footer);
+ a.append(title,done);li.append(a);toc.append(li);
+ a.addEventListener('click',()=>setContents(false));
+ const footer=document.createElement('div');footer.className='lesson-footer';const complete=document.createElement('input');complete.type='checkbox';complete.checked=!!state.done[lesson.id];const completeLabel=completeToggle(complete,'Mark as completed','Completed');complete.addEventListener('change',()=>{state.done[lesson.id]=complete.checked;done.hidden=!complete.checked;save();updateProgress();});
+ const pager=document.createElement('div');pager.className='pager';if(index>0){const prev=document.createElement('a');prev.className='btn';prev.href='#'+lessons[index-1].id;prev.textContent='Previous';pager.append(prev);}if(index<lessons.length-1){const next=document.createElement('a');next.className='btn primary next';next.href='#'+lessons[index+1].id;next.textContent='Next: '+lessons[index+1].dataset.title;pager.append(next);}const saveError=document.createElement('p');saveError.className='save-state';saveError.setAttribute('role','status');saveError.hidden=true;const completeGroup=document.createElement('div');completeGroup.className='complete-group';completeGroup.append(completeLabel);footer.append(completeGroup,pager,saveError);lesson.append(footer);
 });
+showSaveStatus();
 const lessonScroll=document.getElementById('lesson-scroll');
-const contents=document.getElementById('contents');
-const sidebar=document.querySelector('.sidebar');
-const up=document.getElementById('lessons-up');
-const down=document.getElementById('lessons-down');
-function updateLessonRange(){
- const links=[...toc.querySelectorAll('a')].filter(a=>!a.closest('li').hidden);
- const bounds=lessonScroll.getBoundingClientRect();
- const visible=links.map((a,index)=>({index,rect:a.getBoundingClientRect()})).filter(item=>item.rect.height>0&&item.rect.bottom>bounds.top+2&&item.rect.top<bounds.bottom-2);
- const range=document.getElementById('lesson-range');
- range.textContent=visible.length?(visible[0].index+1)+'–'+(visible.at(-1).index+1)+' of '+links.length:links.length+' lessons';
- up.disabled=lessonScroll.scrollTop<=1;
- down.disabled=lessonScroll.scrollTop+lessonScroll.clientHeight>=lessonScroll.scrollHeight-1;
-}
+const sidebar=document.getElementById('sidebar');
+const contentsToggle=document.getElementById('contents-toggle');
+const narrow=matchMedia('(max-width:650px)');
+// phone only: the lesson list folds under a button that names the current lesson
+function setContents(open){open=open&&narrow.matches;if(open&&!sidebar.classList.contains('expanded'))replay(lessonScroll,'arrive');sidebar.classList.toggle('expanded',open);contentsToggle.setAttribute('aria-expanded',open);if(open)requestAnimationFrame(revealCurrentLesson);}
+contentsToggle.addEventListener('click',()=>setContents(!sidebar.classList.contains('expanded')));
+narrow.addEventListener('change',()=>setContents(false));
 function revealCurrentLesson(){
- if(!contents.open)return;
  const current=toc.querySelector('[aria-current="page"]');
- if(!current||current.closest('li').hidden)return;
+ if(!current||current.closest('li').hidden||!lessonScroll.clientHeight)return;
  const bounds=lessonScroll.getBoundingClientRect(),rect=current.getBoundingClientRect();
  if(rect.top<bounds.top+8)lessonScroll.scrollTop-=bounds.top+8-rect.top;
  else if(rect.bottom>bounds.bottom-8)lessonScroll.scrollTop+=rect.bottom-bounds.bottom+8;
- updateLessonRange();
 }
-function fitContents(){
- const top=Math.max(12,sidebar.getBoundingClientRect().top);
- const height=Math.max(200,Math.min(900,window.innerHeight-top-12));
- const value=Math.round(height)+'px';
- if(sidebar.style.getPropertyValue('--sidebar-height')!==value)sidebar.style.setProperty('--sidebar-height',value);
- const padding=getComputedStyle(sidebar);
- const available=Math.round(height-parseFloat(padding.paddingTop)-parseFloat(padding.paddingBottom)-contents.querySelector('summary').getBoundingClientRect().height-8)+'px';
- if(sidebar.style.getPropertyValue('--contents-height')!==available)sidebar.style.setProperty('--contents-height',available);
- updateLessonRange();
-}
-lessonScroll.addEventListener('scroll',updateLessonRange,{passive:true});
-up.addEventListener('click',()=>lessonScroll.scrollBy({top:-lessonScroll.clientHeight*.8,behavior:'instant'}));
-down.addEventListener('click',()=>lessonScroll.scrollBy({top:lessonScroll.clientHeight*.8,behavior:'instant'}));
-contents.addEventListener('toggle',()=>requestAnimationFrame(()=>{fitContents();revealCurrentLesson();}));
-window.addEventListener('resize',()=>{fitContents();revealCurrentLesson();});
-window.addEventListener('scroll',fitContents,{passive:true});
-if(typeof ResizeObserver!=='undefined')new ResizeObserver(updateLessonRange).observe(lessonScroll);
-requestAnimationFrame(()=>{fitContents();revealCurrentLesson();});
-function updateProgress(){const count=lessons.filter(l=>state.done[l.id]).length;document.getElementById('progress-text').textContent=count+' / '+lessons.length+' studied';const bar=document.getElementById('course-progress');bar.max=lessons.length;bar.value=count;}
+window.addEventListener('resize',revealCurrentLesson);
+const shell=document.querySelector('.shell'),sidebarToggle=document.getElementById('sidebar-toggle'),sidebarKey='tla-course-sidebar';
+// wider screens: the sidebar folds to a rail; remembered in this browser only
+function setSidebar(collapsed){shell.classList.toggle('collapsed',collapsed);sidebarToggle.setAttribute('aria-expanded',!collapsed);const label=collapsed?'Expand sidebar':'Collapse sidebar';sidebarToggle.setAttribute('aria-label',label);sidebarToggle.title=label;}
+try{setSidebar(localStorage.getItem(sidebarKey)==='collapsed');}catch{}
+requestAnimationFrame(()=>shell.classList.add('animate'));
+sidebarToggle.addEventListener('click',()=>{const collapsed=!shell.classList.contains('collapsed');setSidebar(collapsed);try{localStorage.setItem(sidebarKey,collapsed?'collapsed':'open');}catch{}if(!collapsed){replay(lessonScroll,'arrive');setTimeout(revealCurrentLesson,260);}});
+function updateProgress(){const count=lessons.filter(l=>state.done[l.id]).length;document.getElementById('progress-text').textContent=count+' / '+lessons.length+' studied';updateTrace();const bar=document.getElementById('course-progress');bar.max=lessons.length;bar.value=count;}
 const videoPages='https://lamport.azurewebsites.net/video/';
 const lecture=(number,yt,title,length,about,page,script,fix)=>({label:'Lecture '+number,by:'Leslie Lamport',yt,title,length,about,page:videoPages+page+'.html',script:videoPages+script+'-script.pdf',fix:fix&&videoPages+'corrections.html#'+fix});
 const videos={
@@ -257,50 +491,63 @@ const videos={
  all:{label:'Full playlist',by:'Leslie Lamport',list:'PLWAv2Etpa7AOAwkreYImYt0gIpOdWQevD',title:'The TLA+ Video Course',length:'13 videos',about:'Every lecture in order. YouTube labels lecture 8 “Paxos Commit”; Lamport’s title is “Implementation”.',page:videoPages+'videos.html'}
 };
 const lessonVideos={orientation:['talk','l1'],states:['l2'],sets:['l5','l6'],counter:['l4'],tools:['l3'],fairness:['l9a','l9b'],messages:['l9b'],transactions:['l5','l6','l7'],consensus:['l7'],refinement:['l8a','l8b','l10a','l10b'],review:['all']};
-let closeVideo=null;
-function stopVideo(){if(closeVideo)closeVideo();}
+// players sit in the page with no src; showLesson loads the shown lesson's and stopVideo blanks them all
+function stopVideo(){document.querySelectorAll('.video-frame iframe[src]').forEach(f=>{if(f.getAttribute('src')!=='about:blank')f.src='about:blank';});}
 function videoLink(text,href){const a=document.createElement('a');a.target='_blank';a.rel='noopener noreferrer';a.href=href;a.textContent=text;return a;}
 function videoCard(video){
  const card=document.createElement('div');card.className='video';
- const play=document.createElement('button');play.type='button';play.className='video-play';
- const icon=document.createElement('span');icon.className='video-icon';icon.setAttribute('aria-hidden','true');icon.textContent='▶';
+ const frame=document.createElement('div');frame.className='video-frame';
+ const watch=video.list?'https://www.youtube.com/playlist?list='+video.list:'https://www.youtube.com/watch?v='+video.yt;
+ if(location.protocol==='file:'){
+  // YouTube refuses to embed in a page opened as a file (error 153), so show the thumbnail and link out
+  const poster=document.createElement('a');poster.className='video-poster';poster.href=watch;poster.target='_blank';poster.rel='noopener noreferrer';
+  if(video.yt){const img=document.createElement('img');img.alt='';img.loading='lazy';img.src='https://i.ytimg.com/vi/'+video.yt+'/hqdefault.jpg';img.addEventListener('error',()=>img.remove());poster.append(img);}
+  const label=document.createElement('span');label.textContent='Watch on YouTube';poster.append(label);frame.append(poster);
+ }else{
+  const iframe=document.createElement('iframe');iframe.title=video.title;iframe.allow='encrypted-media; picture-in-picture; fullscreen';iframe.allowFullscreen=true;iframe.referrerPolicy='strict-origin-when-cross-origin';
+  iframe.dataset.src='https://www.youtube-nocookie.com/embed/'+(video.list?'videoseries?list='+video.list+'&':video.yt+'?')+'rel=0';
+  frame.append(iframe);
+ }
+ const head=document.createElement('div');head.className='video-head';
  const text=document.createElement('span'),name=document.createElement('span'),meta=document.createElement('span');
  name.className='video-name';name.textContent=video.title;
- meta.className='video-meta';meta.textContent=[video.label,video.length,video.by].filter(Boolean).join(' · ');
- text.append(name,meta);play.append(icon,text);play.setAttribute('aria-label','Play '+video.title);
+ meta.className='video-meta';meta.textContent=video.label+(video.by?' by '+video.by:'');text.className='video-text';
+ const length=document.createElement('span');length.className='video-length';length.textContent=video.length||'';
+ text.append(name,meta);head.append(text,length);
  const about=document.createElement('p');about.className='video-about';about.textContent=video.about;
  const links=document.createElement('div');links.className='video-links';
- const close=document.createElement('button');close.type='button';close.className='video-close';close.textContent='Close video';close.hidden=true;
- links.append(close,videoLink('Open on YouTube',video.list?'https://www.youtube.com/playlist?list='+video.list:'https://www.youtube.com/watch?v='+video.yt));
+ links.append(videoLink('Open on YouTube',watch));
  if(video.page)links.append(videoLink(video.list?'Lamport’s course page':'Lamport’s page',video.page));
  if(video.script)links.append(videoLink('Script (PDF)',video.script));
  if(video.fix)links.append(videoLink('Corrections',video.fix));
- let frame=null;
- function remove(returnFocus){frame.remove();frame=null;closeVideo=null;play.hidden=false;close.hidden=true;if(returnFocus)play.focus();}
- play.addEventListener('click',()=>{
-  stopVideo();
-  frame=document.createElement('div');frame.className='video-frame';
-  const iframe=document.createElement('iframe');iframe.title=video.title;iframe.allow='autoplay; encrypted-media; picture-in-picture; fullscreen';iframe.allowFullscreen=true;iframe.referrerPolicy='strict-origin-when-cross-origin';
-  iframe.src='https://www.youtube-nocookie.com/embed/'+(video.list?'videoseries?list='+video.list+'&':video.yt+'?')+'autoplay=1&rel=0';
-  frame.append(iframe);card.prepend(frame);play.hidden=true;close.hidden=false;closeVideo=()=>remove(false);iframe.focus();
- });
- close.addEventListener('click',()=>remove(true));
- card.append(play,about,links);return card;
+ card.append(frame,head,about,links);return card;
 }
 Object.entries(lessonVideos).forEach(([id,keys])=>{
  const lesson=document.getElementById(id);
  const block=document.createElement('section');block.className='videos';block.setAttribute('aria-labelledby','videos-'+id);
  const heading=document.createElement('h2');heading.id='videos-'+id;heading.textContent=keys.length>1?'Videos for this topic':'Video for this topic';
- const note=document.createElement('p');note.className='videos-note';note.textContent='Plays here and needs internet. The lesson works without it.';
+ const note=document.createElement('p');note.className='videos-note';note.textContent='The player needs internet. The lesson works without it.';
  block.append(heading,note,...keys.map(k=>videoCard(videos[k])));
  lesson.querySelector('h1').nextElementSibling.after(block);
 });
+const trace=document.getElementById('trace');
+// one group per part, so a lecture's cells wrap together
+let tracePart=null;
+lessons.forEach((lesson,index)=>{
+ if(index===0||lesson.dataset.part!==lessons[index-1].dataset.part){tracePart=document.createElement('span');tracePart.className='trace-part';trace.append(tracePart);}
+ const cell=document.createElement('span');cell.title=lesson.dataset.title;cell.dataset.id=lesson.id;
+ if(lesson.querySelector('.problem'))cell.classList.add('ps');
+ cell.addEventListener('click',()=>{location.hash=lesson.id;});tracePart.append(cell);tracePart.style.flexGrow=tracePart.children.length;
+});
+function updateTrace(){trace.querySelectorAll('[data-id]').forEach(cell=>{cell.classList.toggle('done',!!state.done[cell.dataset.id]);cell.classList.toggle('current',cell.dataset.id===shownLesson);});}
 function showLesson(id,focus=false){
  stopVideo();
  const lesson=lessons.find(l=>l.id===id)||lessons[0];
  restoringScroll=true;shownLesson=lesson.id;
  lessons.forEach(l=>l.hidden=l!==lesson);
- toc.querySelectorAll('a').forEach(a=>{if(a.hash==='#'+lesson.id)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
+ document.getElementById('contents-current').textContent=lesson.dataset.title;
+ lesson.querySelectorAll('.video-frame iframe').forEach(f=>{if(f.getAttribute('src')!==f.dataset.src)f.src=f.dataset.src;});
+ toc.querySelectorAll('a').forEach(a=>{if(a.hash==='#'+lesson.id)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});updateTrace();
  state.current=lesson.id;save();document.title=lesson.dataset.title+' · TLA+ course';
  requestAnimationFrame(()=>{
   const extent=Math.max(0,document.documentElement.scrollHeight-window.innerHeight);
@@ -312,11 +559,19 @@ function showLesson(id,focus=false){
 }
 window.addEventListener('hashchange',()=>{const id=location.hash.slice(1);if(lessons.some(l=>l.id===id))showLesson(id,true);});
 showLesson(lessons.some(l=>l.id===location.hash.slice(1))?location.hash.slice(1):state.current);
-if(matchMedia('(max-width:650px)').matches)document.getElementById('contents').open=false;
-matchMedia('(max-width:650px)').addEventListener('change',event=>{document.getElementById('contents').open=!event.matches;});
-const search=document.getElementById('search');search.addEventListener('input',()=>{const query=search.value.trim().toLowerCase();let count=0;toc.querySelectorAll('li:not(.group)').forEach(li=>{const lesson=lessons.find(l=>'#'+l.id===li.querySelector('a').hash);const match=!query||lesson.textContent.toLowerCase().includes(query);li.hidden=!match;if(match)count++;});toc.querySelectorAll('.group').forEach(group=>{let next=group.nextElementSibling,visible=false;while(next&&!next.classList.contains('group')){if(!next.hidden)visible=true;next=next.nextElementSibling;}group.hidden=!visible;});const status=document.getElementById('search-status');status.hidden=!query;status.textContent=count?count+' matching lessons':'No matching lessons. Try another term.';lessonScroll.scrollTop=0;requestAnimationFrame(updateLessonRange);});
-function setTheme(){document.documentElement.dataset.theme=state.theme;document.getElementById('theme').textContent=state.theme==='dark'?'Light mode':'Dark mode';}setTheme();document.getElementById('theme').addEventListener('click',()=>{state.theme=state.theme==='light'?'dark':'light';setTheme();save();});
-let openBefore=[];window.addEventListener('beforeprint',()=>{openBefore=[...document.querySelectorAll('details.answer')].map(d=>[d,d.open]);openBefore.forEach(([d])=>d.open=true);});window.addEventListener('afterprint',()=>{openBefore.forEach(([d,open])=>d.open=open);});document.getElementById('print').addEventListener('click',()=>window.print());
+function setTheme(){document.documentElement.dataset.theme=state.theme;const button=document.getElementById('theme'),label=state.theme==='dark'?'Switch to light mode':'Switch to dark mode';button.setAttribute('aria-label',label);button.title=label;}setTheme();requestAnimationFrame(()=>requestAnimationFrame(()=>document.getElementById('theme').classList.add('ready')));// the new theme spreads out in a circle from the button, where the browser supports view transitions
+document.getElementById('theme').addEventListener('click',event=>{
+ state.theme=state.theme==='light'?'dark':'light';save();
+ if(!document.startViewTransition||matchMedia('(prefers-reduced-motion: reduce)').matches){setTheme();return;}
+ const r=event.currentTarget.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,radius=Math.hypot(Math.max(x,innerWidth-x),Math.max(y,innerHeight-y));
+ document.startViewTransition(setTheme).ready.then(()=>document.documentElement.animate({clipPath:['circle(0 at '+x+'px '+y+'px)','circle('+radius+'px at '+x+'px '+y+'px)']},{duration:550,easing:'cubic-bezier(.4,0,.2,1)',pseudoElement:'::view-transition-new(root)'})).catch(()=>{});
+});
+// replay a short arrival each time a quiz, number check or lab status says something new
+function replay(el,name='pop'){if(!el)return;el.classList.remove(name);void el.offsetWidth;el.classList.add(name);}
+document.addEventListener('click',event=>{const box=event.target.closest('.quiz,.numcheck');if(box&&event.target.closest('button'))replay(box.querySelector('.quiz-feedback'));});
+const statusWatch=new MutationObserver(records=>records.forEach(r=>replay(r.target.nodeType===1?r.target.closest('.status'):r.target.parentElement&&r.target.parentElement.closest('.status'))));
+document.querySelectorAll('.lab .status').forEach(el=>statusWatch.observe(el,{childList:true,characterData:true,subtree:true}));
+let openBefore=[];window.addEventListener('beforeprint',()=>{openBefore=[...document.querySelectorAll('details.answer,details.hint')].map(d=>[d,d.open]);openBefore.forEach(([d])=>d.open=true);});window.addEventListener('afterprint',()=>{openBefore.forEach(([d,open])=>d.open=open);});
 document.querySelectorAll('.quiz').forEach((quiz,index)=>{const button=quiz.querySelector('button'),feedback=quiz.querySelector('.quiz-feedback'),id=quiz.closest('.lesson').id+'-'+index;const saved=state.answers[id];if(typeof saved==='string'){const input=[...quiz.querySelectorAll('input')].find(i=>i.value===saved);if(input)input.checked=true;}
 button.addEventListener('click',()=>{const selected=quiz.querySelector('input:checked');if(!selected){feedback.textContent='Choose an answer first.';feedback.className='quiz-feedback';return;}const correct=selected.value===quiz.dataset.answer;feedback.textContent=(correct?'Correct. ':'Try again. ')+quiz.dataset.explain;feedback.className='quiz-feedback '+(correct?'good':'bad');state.answers[id]=selected.value;save();});});
 document.querySelectorAll('pre').forEach(pre=>{const row=document.createElement('div');row.className='code-tools';const button=document.createElement('button');button.type='button';button.textContent='Copy code';button.addEventListener('click',async()=>{const text=pre.textContent;try{if(navigator.clipboard&&window.isSecureContext)await navigator.clipboard.writeText(text);else{const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.top='-9999px';document.body.append(ta);ta.select();const ok=document.execCommand('copy');ta.remove();if(!ok)throw Error('Copy unavailable');}button.textContent='Copied';}catch{button.textContent='Select and copy the code';}setTimeout(()=>button.textContent='Copy code',2200);});row.append(button);pre.after(row);});

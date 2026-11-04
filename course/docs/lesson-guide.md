@@ -12,7 +12,7 @@ The course is one offline HTML page, built by `build.py` from the files below. P
 - `tlc.sh Name`: run real TLC on `specs/Name.tla`.
 
 ## Lesson format
-`src/<id>.html` starts with `<h1>` (a claim or idea, not the sidebar title), then `<p class="lead">`. No `<section>` wrapper and no "Lesson N" line; the build adds those, and the video player is inserted automatically right after the lead.
+`src/<id>.html` starts with `<h1>` (a claim or idea, not the sidebar title), then `<p class="lead">`. No `<section>` wrapper and no chapter line; the build adds those, and the video player is inserted automatically right after the lead.
 - Refer to other lessons only with `{{lesson:id}}`, never a number. Lessons get renumbered.
 - Diagrams: put `<!--fig:name-->` in the HTML and in `src/<id>.figs.py`:
   ```python
