@@ -2,6 +2,8 @@
 
 An offline, visual course for learning [TLA+](https://lamport.azurewebsites.net/tla/tla.html), Leslie Lamport's language for specifying and model-checking concurrent and distributed systems. It follows Lamport's [TLA+ video course](https://lamport.azurewebsites.net/video/videos.html) lecture by lecture, then goes beyond it into concurrency, proofs, failure-prone systems and applied models. Each chapter ends with a problem set built from real systems.
 
+**Take the course online at [sxxrfx.github.io/tla-plus-course](https://sxxrfx.github.io/tla-plus-course/).**
+
 The whole course is one HTML file. Open it in a browser and it works without a network connection; only the embedded lecture videos need internet. A small macOS menu-bar app is included that serves it locally and saves your progress to disk.
 
 ![A lesson: the Die Hard jug puzzle, with its lecture video and a diagram of one correct behavior](docs/screenshots/lesson.png)
@@ -30,7 +32,9 @@ The whole course is one HTML file. Open it in a browser and it works without a n
 
 ## Use it
 
-**In a browser.** Download [`tla-plus-course.html`](tla-plus-course.html) and open it. Progress is saved in that browser's local storage, and **Save progress** forces a save. **Print course** prints every lesson.
+**Online.** Open [sxxrfx.github.io/tla-plus-course](https://sxxrfx.github.io/tla-plus-course/). Your progress, answers and notes are saved in that browser's local storage, so they come back when you return in the same browser. They are not synced to other browsers or devices, and clearing the site's data for `sxxrfx.github.io` erases them.
+
+**Offline.** Download [`tla-plus-course.html`](tla-plus-course.html) and open it. Progress is saved in that browser's local storage the same way, separately from the online copy. **Save progress** forces a save. **Print course** prints every lesson.
 
 **As a macOS app** (macOS 14 or later, Apple silicon). You need Rust and Cargo, plus Apple's command-line developer tools:
 
@@ -80,6 +84,7 @@ course/
   docs/                  authoring guides for lessons and problem sets
 mac-app/                 Swift menu-bar app, Rust launcher and local server
 docs/screenshots/        README images
+.github/workflows/       publishes tla-plus-course.html to GitHub Pages on every push to main
 ```
 
 To add or change a lesson, see [`course/docs/lesson-guide.md`](course/docs/lesson-guide.md) and [`course/docs/problem-set-guide.md`](course/docs/problem-set-guide.md).

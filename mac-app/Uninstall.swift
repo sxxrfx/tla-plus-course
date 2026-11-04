@@ -39,7 +39,7 @@ struct UninstallPlan {
             guard bytes.count <= 16384 else { throw UninstallFailure.invalidManifest }
             let manifest = try JSONDecoder().decode(UninstallManifest.self, from: bytes)
             let root = URL(fileURLWithPath: manifest.sourceRoot, isDirectory: true).standardizedFileURL
-            let allowed = Set(["tla-plus-course.html", "mac-app", "course", "docs", "README.md", "LICENSE", ".gitignore", "output/tla-ticket.html"])
+            let allowed = Set(["tla-plus-course.html", "mac-app", "course", "docs", "README.md", "LICENSE", ".gitignore", ".github", "output/tla-ticket.html"])
             guard manifest.version == 1, root.path != "/", root != home,
                   manifest.sourceRoot.hasPrefix("/"), manifest.sources.count <= allowed.count else {
                 throw UninstallFailure.invalidManifest
