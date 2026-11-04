@@ -6,7 +6,7 @@ An offline, visual course for learning [TLA+](https://lamport.azurewebsites.net/
 
 The whole course is one HTML file. Open it in a browser and it works without a network connection; only the embedded lecture videos need internet. A small macOS menu-bar app is included that serves it locally and saves your progress to disk.
 
-![A lesson: the Die Hard jug puzzle, with its lecture video and a diagram of one correct behavior](docs/screenshots/lesson.png)
+![TLA+ Course: learn TLA+ with real systems. 39 lessons, 61 problems, 206 diagrams and 11 labs. Shown with a lesson page and the interactive Die Hard lab.](docs/infographic.webp)
 
 ## What's inside
 
